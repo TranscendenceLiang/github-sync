@@ -67,7 +67,6 @@ def test_run_sync_returns_nonzero_on_failure(tmp_path, monkeypatch):
         "SSH_KEY_GITCODE", "TOKEN_GITCODE",
     ]:
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("SYNC_FAKE", "1")  # marker
     # main() catches the error and returns non-zero
     from src.main import main
     rc = main(config_path=cfg_file, work_dir=tmp_path / "work")

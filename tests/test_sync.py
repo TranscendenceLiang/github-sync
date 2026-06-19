@@ -128,3 +128,41 @@ def test_sync_topology_entry_missing_credentials(tmp_path, make_local_repo):
             work_dir=tmp_path / "work",
             url_overrides={"github": "x", "gitee": "y"},
         )
+
+
+def test_sync_topology_entry_empty_target(tmp_path, make_local_repo):
+    """First-time sync: source has commits, target branch does not exist yet."""
+    src = make_local_repo(commits=2, branch="main")
+    # Empty target: bare repo with NO commits at all on `main`
+    dst_bare = tmp_path / "empty_dst.git"
+    subprocess.run(["git", "init", "--bare", str(dst_bare)], check=True, capture_output=True)
+
+    src_bare = Path(src["bare"])
+
+    creds = {
+        "github": Credential(ssh_key="k", pat=None),
+        "gitee": Credential(ssh_key="k", pat=None),
+    }
+    entry = TopologyEntry(
+        name="first-sync",
+        source=Endpoint(platform="github", owner="o", repo="r", branch="main", auth="ssh"),
+        targets=[Endpoint(platform="gitee", owner="o", repo="r", branch="main", auth="ssh")],
+    )
+
+    result = sync_topology_entry(
+        entry=entry,
+        creds=creds,
+        work_dir=tmp_path / "work",
+        url_overrides={"github": str(src_bare), "gitee": str(dst_bare)},
+        bypass_credentials=True,
+    )
+    assert result.success is True
+
+    # Verify the empty target now has the source's HEAD
+    dst_head = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=dst_bare, capture_output=True, text=True
+    )
+    src_head = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=src_bare, capture_output=True, text=True
+    )
+    assert dst_head.stdout.strip() == src_head.stdout.strip()

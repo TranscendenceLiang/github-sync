@@ -183,8 +183,7 @@ def sync_topology_entry(
                 token=tgt_cred_value,
             )
 
-        target_clone_dir = work_dir / f"tgt_{entry.name}_{target.platform}"
-        # We use a bare clone to fetch target state without checkout conflicts
+        # Use a bare clone to fetch target state without checkout conflicts
         target_bare_dir = work_dir / f"tgtbare_{entry.name}_{target.platform}"
         try:
             clone_or_fetch(target_url, target_bare_dir, target.branch)
@@ -196,7 +195,6 @@ def sync_topology_entry(
             if "not found" in stderr or "couldn't find remote ref" in stderr:
                 target_sha = None
             else:
-                shutil.rmtree(target_bare_dir, ignore_errors=True)
                 raise SyncError(
                     f"failed to fetch target {target.platform}:{target.owner}/{target.repo}: {e}"
                 ) from e

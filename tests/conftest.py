@@ -7,14 +7,6 @@ import pytest
 
 
 @pytest.fixture
-def tmp_repos_dir(tmp_path):
-    """Provide a temporary directory for git operations."""
-    repos_dir = tmp_path / "repos"
-    repos_dir.mkdir()
-    return repos_dir
-
-
-@pytest.fixture
 def make_local_repo(tmp_path):
     """Factory: create a local bare repo (acts as 'remote') and a working clone.
 
