@@ -26,12 +26,16 @@ def run_sync(
     # 1. Load config (propagate ConfigError so callers can distinguish)
     cfg = load_config(config_path)
 
-    # 2. Determine which platforms are required by the topology
+    # 2. Determine which platforms are required by the topology.
+    # url_overrides acts as a credential bypass for those platforms (used in
+    # tests to inject local bare repos without real auth).
     required: set[str] = set()
     for entry in cfg.topology:
-        required.add(entry.source.platform)
+        if not url_overrides or entry.source.platform not in url_overrides:
+            required.add(entry.source.platform)
         for t in entry.targets:
-            required.add(t.platform)
+            if not url_overrides or t.platform not in url_overrides:
+                required.add(t.platform)
 
     # 3. Load credentials
     try:
@@ -41,6 +45,10 @@ def run_sync(
         return 3
 
     # 4. Execute each topology entry
+    # When url_overrides is set, the test/integration escape hatch is in
+    # effect: bypass the credential-availability check (the override is the
+    # credential). Production code never sets url_overrides.
+    bypass_credentials = bool(url_overrides)
     failed = 0
     for entry in cfg.topology:
         print(f"[INFO] syncing topology entry: {entry.name}")
@@ -51,6 +59,7 @@ def run_sync(
                 work_dir=work_dir / entry.name,
                 force_push=cfg.settings.force_push,
                 url_overrides=url_overrides,
+                bypass_credentials=bypass_credentials,
             )
             print(
                 f"[OK] {entry.name}: {result.source} -> "

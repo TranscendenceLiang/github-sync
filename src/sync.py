@@ -96,6 +96,7 @@ def sync_topology_entry(
     work_dir: Path,
     force_push: bool = False,
     url_overrides: dict[str, str] | None = None,
+    bypass_credentials: bool = False,
 ) -> SyncResult:
     """Execute a single topology entry: fetch source, push to all targets.
 
@@ -106,6 +107,10 @@ def sync_topology_entry(
         force_push: Whether to allow non-fast-forward pushes (from settings).
         url_overrides: Optional mapping platform -> URL. Used by tests to inject
             local bare repos. In production, URLs are built from build_url().
+        bypass_credentials: If True, skip the credential-availability check for
+            all platforms. Use only when callers have already validated that
+            url_overrides (or some other mechanism) provides a usable URL.
+            This is the integration-test escape hatch.
 
     Raises:
         SyncError: On any failure (missing creds, conflict, git errors).
@@ -113,11 +118,14 @@ def sync_topology_entry(
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check source credentials
+    # Check source credentials.
     src_cred_value = _resolve_credentials(entry.source, creds)
-    if entry.source.platform not in creds or not (
-        (entry.source.auth == "pat" and src_cred_value)
-        or (entry.source.auth == "ssh" and src_cred_value)
+    if not bypass_credentials and (
+        entry.source.platform not in creds
+        or not (
+            (entry.source.auth == "pat" and src_cred_value)
+            or (entry.source.auth == "ssh" and src_cred_value)
+        )
     ):
         raise SyncError(
             f"missing credentials for source platform {entry.source.platform!r}"
@@ -150,11 +158,14 @@ def sync_topology_entry(
     pushed: list[str] = []
 
     for target in entry.targets:
-        # Check target credentials
+        # Check target credentials.
         tgt_cred_value = _resolve_credentials(target, creds)
-        if target.platform not in creds or not (
-            (target.auth == "pat" and tgt_cred_value)
-            or (target.auth == "ssh" and tgt_cred_value)
+        if not bypass_credentials and (
+            target.platform not in creds
+            or not (
+                (target.auth == "pat" and tgt_cred_value)
+                or (target.auth == "ssh" and tgt_cred_value)
+            )
         ):
             raise SyncError(
                 f"missing credentials for target platform {target.platform!r}"
