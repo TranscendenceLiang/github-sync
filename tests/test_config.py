@@ -1,0 +1,211 @@
+"""Tests for YAML config loading and validation."""
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from src.config import (
+    SyncConfig,
+    SyncSettings,
+    TopologyEntry,
+    Endpoint,
+    load_config,
+    ConfigError,
+)
+
+
+def test_load_minimal_config(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          settings:
+            auto_create: false
+            force_push: false
+            delete_remote: false
+          topology: []
+    """))
+    cfg = load_config(cfg_file)
+    assert isinstance(cfg, SyncConfig)
+    assert cfg.settings.auto_create is False
+    assert cfg.settings.force_push is False
+    assert cfg.settings.delete_remote is False
+    assert cfg.topology == []
+
+
+def test_load_full_config(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          settings:
+            auto_create: false
+            force_push: false
+            delete_remote: true
+          topology:
+            - name: "github-to-gitee"
+              source:
+                platform: github
+                owner: myorg
+                repo: myproject
+                branch: main
+                auth: ssh
+              targets:
+                - platform: gitee
+                  owner: myorg
+                  repo: myproject
+                  branch: main
+                  auth: ssh
+            - name: "broadcast"
+              source:
+                platform: github
+                owner: myorg
+                repo: myproject
+                branch: develop
+                auth: pat
+              targets:
+                - platform: gitee
+                  owner: myorg
+                  repo: myproject
+                  branch: develop
+                  auth: ssh
+                - platform: cnb
+                  owner: myteam
+                  repo: myproject
+                  branch: develop
+                  auth: pat
+    """))
+    cfg = load_config(cfg_file)
+    assert len(cfg.topology) == 2
+
+    first = cfg.topology[0]
+    assert isinstance(first, TopologyEntry)
+    assert first.name == "github-to-gitee"
+    assert first.source.platform == "github"
+    assert first.source.auth == "ssh"
+    assert first.source.branch == "main"
+    assert len(first.targets) == 1
+    assert first.targets[0].platform == "gitee"
+
+    second = cfg.topology[1]
+    assert second.source.auth == "pat"
+    assert len(second.targets) == 2
+    assert second.targets[1].platform == "cnb"
+    assert second.targets[1].auth == "pat"
+
+
+def test_load_config_defaults(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source:
+                platform: github
+                owner: o
+                repo: r
+                branch: main
+              targets:
+                - platform: gitee
+                  owner: o
+                  repo: r
+                  branch: main
+    """))
+    cfg = load_config(cfg_file)
+    assert cfg.settings.auto_create is False
+    assert cfg.settings.force_push is False
+    assert cfg.settings.delete_remote is False
+    # auth defaults to ssh
+    assert cfg.topology[0].source.auth == "ssh"
+    assert cfg.topology[0].targets[0].auth == "ssh"
+
+
+def test_load_config_missing_sync_key_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text("foo: bar\n")
+    with pytest.raises(ConfigError, match="sync"):
+        load_config(cfg_file)
+
+
+def test_load_config_topology_not_list_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text("sync:\n  topology: notalist\n")
+    with pytest.raises(ConfigError, match="topology must be a list"):
+        load_config(cfg_file)
+
+
+def test_load_config_topology_entry_missing_name(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - source:
+                platform: github
+                owner: o
+                repo: r
+                branch: main
+              targets:
+                - platform: gitee
+                  owner: o
+                  repo: r
+                  branch: main
+    """))
+    with pytest.raises(ConfigError, match="name"):
+        load_config(cfg_file)
+
+
+def test_load_config_endpoint_missing_required_field(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: x
+              source:
+                platform: github
+                owner: o
+                branch: main
+              targets:
+                - platform: gitee
+                  owner: o
+                  repo: r
+                  branch: main
+    """))
+    with pytest.raises(ConfigError, match="repo"):
+        load_config(cfg_file)
+
+
+def test_load_config_targets_empty_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: x
+              source:
+                platform: github
+                owner: o
+                repo: r
+                branch: main
+              targets: []
+    """))
+    with pytest.raises(ConfigError, match="at least one target"):
+        load_config(cfg_file)
+
+
+def test_load_config_invalid_auth_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: x
+              source:
+                platform: github
+                owner: o
+                repo: r
+                branch: main
+                auth: bogus
+              targets:
+                - platform: gitee
+                  owner: o
+                  repo: r
+                  branch: main
+    """))
+    with pytest.raises(ConfigError, match="auth"):
+        load_config(cfg_file)
