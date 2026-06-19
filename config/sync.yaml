@@ -1,0 +1,24 @@
+# Git Multi-Sync Center - default configuration
+# See docs/README.md for full schema documentation
+sync:
+  settings:
+    auto_create: false        # Not yet implemented; config slot reserved
+    force_push: false
+    delete_remote: false
+
+  topology: []
+  # Example:
+  # topology:
+  #   - name: "github-to-gitee"
+  #     source:
+  #       platform: github
+  #       owner: myorg
+  #       repo: myproject
+  #       branch: main
+  #       auth: ssh
+  #     targets:
+  #       - platform: gitee
+  #         owner: myorg
+  #         repo: myproject
+  #         branch: main
+  #         auth: ssh
