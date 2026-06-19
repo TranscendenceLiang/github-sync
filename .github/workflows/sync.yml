@@ -1,0 +1,74 @@
+name: Sync Repositories
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+
+  # Triggered by other repositories via repository_dispatch
+  repository_dispatch:
+    types: [sync-triggered]
+
+  # Scheduled runs (default: every 6 hours)
+  schedule:
+    - cron: "7 */6 * * *"  # off-the-hour minute to avoid thundering herd
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prepare SSH directory
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # Disable strict host key checking to allow first-time connections
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile=/dev/null
+            IdentityFile ~/.ssh/id_rsa
+          EOF
+
+      - name: Write SSH keys (if provided)
+        # Only writes keys whose Secret is set; PAT-only platforms are skipped
+        env:
+          SSH_KEY_GITHUB: ${{ secrets.SSH_KEY_GITHUB }}
+          SSH_KEY_GITEE: ${{ secrets.SSH_KEY_GITEE }}
+          SSH_KEY_GITCODE: ${{ secrets.SSH_KEY_GITCODE }}
+        run: |
+          set -e
+          for k in SSH_KEY_GITHUB SSH_KEY_GITEE SSH_KEY_GITCODE; do
+            v="${!k:-}"
+            if [ -n "$v" ]; then
+              echo ">>> Writing $k"
+              printf '%s\n' "$v" > ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              break  # only one SSH key per host; if multiple platforms use
+                     # the same host, additional setup would be required
+            fi
+          done
+
+      - name: Run sync engine
+        env:
+          SSH_KEY_GITHUB: ${{ secrets.SSH_KEY_GITHUB }}
+          TOKEN_GITHUB: ${{ secrets.TOKEN_GITHUB }}
+          SSH_KEY_GITEE: ${{ secrets.SSH_KEY_GITEE }}
+          TOKEN_GITEE: ${{ secrets.TOKEN_GITEE }}
+          TOKEN_CNB: ${{ secrets.TOKEN_CNB }}
+          SSH_KEY_GITCODE: ${{ secrets.SSH_KEY_GITCODE }}
+          TOKEN_GITCODE: ${{ secrets.TOKEN_GITCODE }}
+        run: |
+          python -m src.main
