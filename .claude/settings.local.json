@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "gitnexus",
+    "codegraphcontext"
+  ]
+}

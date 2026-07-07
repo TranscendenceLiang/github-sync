@@ -6,3 +6,6 @@ __pycache__/
 venv/
 .env
 repos/
+
+# CGC KuzuDB database
+.cgc/
