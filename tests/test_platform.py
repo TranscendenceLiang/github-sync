@@ -33,7 +33,7 @@ def test_build_url_gitee_pat():
 
 def test_build_url_cnb_pat():
     url = build_url("cnb", "myorg", "myrepo", auth="pat", token="cnb_xxx")
-    assert url == "https://cnb_xxx@cnb.cool/myorg/myrepo.git"
+    assert url == "https://cnb:cnb_xxx@cnb.cool/myorg/myrepo"
 
 
 def test_build_url_cnb_ssh_raises():

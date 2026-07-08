@@ -18,7 +18,7 @@ _SSH_TEMPLATES = {
 _HTTPS_TEMPLATES = {
     "github": "https://x-access-token:{token}@github.com/{owner}/{repo}.git",
     "gitee": "https://{token}@gitee.com/{owner}/{repo}.git",
-    "cnb": "https://{token}@cnb.cool/{owner}/{repo}.git",
+    "cnb": "https://cnb:{token}@cnb.cool/{owner}/{repo}",
     "gitcode": "https://{token}@gitcode.com/{owner}/{repo}.git",
 }
 
