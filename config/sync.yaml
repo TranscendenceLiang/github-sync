@@ -6,19 +6,17 @@ sync:
     force_push: false
     delete_remote: false
 
-  topology: []
-  # Example:
-  # topology:
-  #   - name: "github-to-gitee"
-  #     source:
-  #       platform: github
-  #       owner: myorg
-  #       repo: myproject
-  #       branch: main
-  #       auth: ssh
-  #     targets:
-  #       - platform: gitee
-  #         owner: myorg
-  #         repo: myproject
-  #         branch: main
-  #         auth: ssh
+  topology:
+    - name: "github-qwenpaw-to-cnb"
+      source:
+        platform: github
+        owner: TranscendenceLiang
+        repo: QwenPaw
+        branch: main
+        auth: ssh
+      targets:
+        - platform: cnb
+          owner: TranscendenceLiang
+          repo: test
+          branch: main
+          auth: pat
