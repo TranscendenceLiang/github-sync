@@ -51,9 +51,16 @@ sync:
     auto_create: false        # Reserved; not yet implemented
     force_push: false         # Allow non-fast-forward pushes
     delete_remote: false      # Delete target branches that no longer exist on source
+    mode: mirror                  # mirror | rebase
+    preserve_files:               # rebase 模式保留的目标特有文件
+      - .cnb.yml
 
   topology:
-    - name: "github-to-gitee"           # Unique name
+    - name: "github-to-cnb"
+      mode: rebase                # 覆盖全局设置（可选）
+      preserve_files:             # 覆盖全局列表（可选）
+        - .cnb.yml
+        - Dockerfile
       source:
         platform: github                # github | gitee | cnb | gitcode
         owner: myorg
@@ -61,11 +68,10 @@ sync:
         branch: main
         auth: ssh                       # ssh (default) | pat
       targets:
-        - platform: gitee
+        - platform: cnb
           owner: myorg
           repo: myproject
           branch: main
-          auth: ssh
 ```
 
 ### One-to-Many (broadcast)
@@ -111,10 +117,35 @@ Configure `SYNC_DISPATCH_TOKEN` in the source repo (same PAT as in the center).
 ## Behavior
 
 - **One-way only**: source → targets. Bi-directional sync is not supported.
-- **Conflict detection**: if both source and target have advanced past their
-  merge base, sync **fails** with a clear error. Resolve manually.
-- **No auto-create**: target repositories must exist. Set them up beforehand.
+- **Conflict detection (default)**: if both source and target have advanced past
+  their merge base, sync **fails** with a clear error. Resolve manually — or set
+  `force_push: true` to skip the check and push with `--force` (the target's
+  divergent commits are overwritten). Use `force_push` only when you intend to
+  make the target match the source exactly.
+- **`force_push`**: when `true`, the divergence/conflict check is skipped and the
+  source branch is force-pushed. When `false` (default), a diverged target aborts
+  the sync.
+- **`delete_remote`**: when `true`, after pushing, any branch that *already
+  existed* on the target (before this sync) but is **not** the branch being
+  synced is deleted from the target. This makes the target a strict mirror of the
+  synced branch. The branch you are syncing is never deleted. **DANGEROUS** — opt
+  in only when you want to discard stale target branches. Defaults to `false`.
+- **No auto-create (`auto_create`)**: reserved for a future release; target
+  repositories must exist today. Set them up beforehand.
 - **No Releases sync**: only branches and tags.
+
+### Rebase 模式
+
+设置 `mode: rebase` 后，源的提交会在目标当前状态之上重放（rebase），而非直接覆盖。
+
+**适用场景：** 从 GitHub 同步到 CNB 时保留 `.cnb.yml` 等平台特有配置文件。
+
+**行为：**
+- 源的提交按顺序应用到目标分支之上
+- 目标特有的文件（源没有的文件）自然保留
+- `preserve_files` 列表中的文件会在 rebase 前后做备份/恢复，防止源意外删除或覆盖
+- Rebase 冲突时跳过该条目，不中止整体流程
+- **注意：** `force_push` 和 `delete_remote` 设置在 rebase 模式下被忽略 — push 始终使用 `--force`（因为 rebase 改写历史），分支清理由 rebase 机制自身保证。
 
 ## Limitations
 
