@@ -43,6 +43,8 @@ class SyncSettings:
     auto_create: bool = False
     force_push: bool = False
     delete_remote: bool = False
+    mode: str = "mirror"
+    preserve_files: list[str] | None = None
 
 
 @dataclass
@@ -68,6 +70,8 @@ class TopologyEntry:
     name: str
     source: Endpoint
     targets: list[Endpoint] = field(default_factory=list)
+    mode: str | None = None
+    preserve_files: list[str] | None = None
 
     def __post_init__(self) -> None:
         if not self.targets:
@@ -112,7 +116,21 @@ def _parse_entry(data: Any) -> TopologyEntry:
     if not isinstance(targets_raw, list):
         raise ConfigError(f"topology[{name}].targets must be a list")
     targets = [_parse_endpoint(t, f"topology[{name}].targets[{i}]") for i, t in enumerate(targets_raw)]
-    return TopologyEntry(name=name, source=source, targets=targets)
+
+    mode = data.get("mode")
+    if mode is not None:
+        mode = str(mode).lower()
+        if mode not in ("mirror", "rebase"):
+            raise ConfigError(f"topology[{name}].mode must be 'mirror' or 'rebase', got {mode!r}")
+
+    pf_raw = data.get("preserve_files")
+    preserve_files = None
+    if pf_raw is not None:
+        if not isinstance(pf_raw, list) or not all(isinstance(f, str) for f in pf_raw):
+            raise ConfigError(f"topology[{name}].preserve_files must be a list of strings")
+        preserve_files = [str(f) for f in pf_raw]
+
+    return TopologyEntry(name=name, source=source, targets=targets, mode=mode, preserve_files=preserve_files)
 
 
 def _parse_settings(data: Any) -> SyncSettings:
@@ -120,10 +138,21 @@ def _parse_settings(data: Any) -> SyncSettings:
         return SyncSettings()
     if not isinstance(data, dict):
         raise ConfigError("settings must be a mapping")
+    mode = str(data.get("mode", "mirror")).lower()
+    if mode not in ("mirror", "rebase"):
+        raise ConfigError(f"settings.mode must be 'mirror' or 'rebase', got {mode!r}")
+    pf_raw = data.get("preserve_files")
+    preserve_files = None
+    if pf_raw is not None:
+        if not isinstance(pf_raw, list) or not all(isinstance(f, str) for f in pf_raw):
+            raise ConfigError("settings.preserve_files must be a list of strings")
+        preserve_files = [str(f) for f in pf_raw]
     return SyncSettings(
         auto_create=bool(data.get("auto_create", False)),
         force_push=bool(data.get("force_push", False)),
         delete_remote=bool(data.get("delete_remote", False)),
+        mode=mode,
+        preserve_files=preserve_files,
     )
 
 

@@ -209,3 +209,87 @@ def test_load_config_invalid_auth_raises(tmp_path):
     """))
     with pytest.raises(ConfigError, match="auth"):
         load_config(cfg_file)
+
+
+def test_load_config_with_mode_and_preserve(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          settings:
+            mode: rebase
+            preserve_files:
+              - .cnb.yml
+          topology:
+            - name: "x"
+              mode: rebase
+              preserve_files:
+                - .cnb.yml
+                - Dockerfile
+              source:
+                platform: github
+                owner: o
+                repo: r
+                branch: main
+              targets:
+                - platform: cnb
+                  owner: o
+                  repo: r
+                  branch: main
+    """))
+    cfg = load_config(cfg_file)
+    assert cfg.settings.mode == "rebase"
+    assert cfg.settings.preserve_files == [".cnb.yml"]
+    assert cfg.topology[0].mode == "rebase"
+    assert cfg.topology[0].preserve_files == [".cnb.yml", "Dockerfile"]
+
+
+def test_load_config_mode_default_mirror(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets: [{platform: gitee, owner: o, repo: r, branch: main}]
+    """))
+    cfg = load_config(cfg_file)
+    assert cfg.settings.mode == "mirror"
+    assert cfg.topology[0].mode is None
+
+
+def test_load_config_invalid_mode_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          settings:
+            mode: merge
+          topology: []
+    """))
+    with pytest.raises(ConfigError, match="mode"):
+        load_config(cfg_file)
+
+
+def test_load_config_invalid_entry_mode_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              mode: foo
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets: [{platform: gitee, owner: o, repo: r, branch: main}]
+    """))
+    with pytest.raises(ConfigError, match="mode"):
+        load_config(cfg_file)
+
+
+def test_load_config_preserve_files_not_list_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          settings:
+            preserve_files: ".cnb.yml"
+          topology: []
+    """))
+    with pytest.raises(ConfigError, match="preserve_files"):
+        load_config(cfg_file)
