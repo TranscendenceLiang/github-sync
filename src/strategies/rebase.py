@@ -1,6 +1,7 @@
 """Rebase strategy: replay source commits on top of target, preserving target-specific files."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -50,7 +51,6 @@ class RebaseStrategy(SyncStrategy):
         target_url: str,
         branch: str,
     ) -> StrategyResult:
-        import os
         env = os.environ.copy()
         env.update({
             "GIT_AUTHOR_NAME": "Git Sync",
@@ -66,11 +66,11 @@ class RebaseStrategy(SyncStrategy):
 
         try:
             # 1. Clone target (full clone, need working tree for rebase)
-            _run(["git", "clone", target_url, str(rebase_dir)], cwd=self.work_dir)
+            _run(["git", "clone", target_url, str(rebase_dir)], cwd=self.work_dir, env=env)
 
             # 2. Add source remote and fetch
-            _run(["git", "remote", "add", "source", str(source_dir)], cwd=rebase_dir)
-            _run(["git", "fetch", "source", branch], cwd=rebase_dir)
+            _run(["git", "remote", "add", "source", str(source_dir)], cwd=rebase_dir, env=env)
+            _run(["git", "fetch", "source", branch], cwd=rebase_dir, env=env)
 
             # 3. Backup protected files
             backups: dict[str, bytes] = {}
@@ -80,13 +80,13 @@ class RebaseStrategy(SyncStrategy):
                     backups[path] = full.read_bytes()
 
             # 4. Checkout + rebase
-            _run(["git", "checkout", branch], cwd=rebase_dir)
+            _run(["git", "checkout", branch], cwd=rebase_dir, env=env)
             proc = subprocess.run(
                 ["git", "rebase", f"source/{branch}"],
-                cwd=rebase_dir, capture_output=True, text=True,
+                cwd=rebase_dir, capture_output=True, text=True, env=env,
             )
             if proc.returncode != 0:
-                subprocess.run(["git", "rebase", "--abort"], cwd=rebase_dir, capture_output=True)
+                subprocess.run(["git", "rebase", "--abort"], cwd=rebase_dir, capture_output=True, env=env)
                 return StrategyResult(
                     success=False,
                     skipped=True,
@@ -104,15 +104,15 @@ class RebaseStrategy(SyncStrategy):
 
             # 6. Commit restored files (if any)
             if restored:
-                _run(["git", "add"] + restored, cwd=rebase_dir)
+                _run(["git", "add"] + restored, cwd=rebase_dir, env=env)
                 _run(
                     ["git", "commit", "-m", f"restore target-specific files: {', '.join(restored)}"],
                     cwd=rebase_dir,
+                    env=env,
                 )
 
             # 7. Push
-            _run(["git", "remote", "add", "target", target_url], cwd=rebase_dir)
-            _run(["git", "push", "--force", "target", branch], cwd=rebase_dir)
+            _run(["git", "push", "--force", "origin", branch], cwd=rebase_dir, env=env)
 
             return StrategyResult(
                 success=True,
@@ -125,9 +125,9 @@ class RebaseStrategy(SyncStrategy):
             shutil.rmtree(rebase_dir, ignore_errors=True)
 
 
-def _run(args: list[str], cwd: Path | None = None) -> None:
+def _run(args: list[str], cwd: Path | None = None, env: dict | None = None) -> None:
     """Run a command; raise RebaseError on failure."""
-    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         raise RebaseError(
             f"command failed: {' '.join(args)}\n  stderr: {proc.stderr.strip()}"
