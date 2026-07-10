@@ -48,7 +48,7 @@ a schedule.
 ```yaml
 sync:
   settings:
-    auto_create: false        # Reserved; not yet implemented
+    auto_create: false        # 全局开关，false（默认）不自动创建，可在 target 级别覆盖
     force_push: false         # Allow non-fast-forward pushes
     delete_remote: false      # Delete target branches that no longer exist on source
     mode: mirror                  # mirror | rebase
@@ -72,6 +72,8 @@ sync:
           owner: myorg
           repo: myproject
           branch: main
+          auto_create: true      # 覆盖全局 false
+          visibility: private    # private（默认）| public
 ```
 
 ### One-to-Many (broadcast)
@@ -130,8 +132,7 @@ Configure `SYNC_DISPATCH_TOKEN` in the source repo (same PAT as in the center).
   synced is deleted from the target. This makes the target a strict mirror of the
   synced branch. The branch you are syncing is never deleted. **DANGEROUS** — opt
   in only when you want to discard stale target branches. Defaults to `false`.
-- **No auto-create (`auto_create`)**: reserved for a future release; target
-  repositories must exist today. Set them up beforehand.
+- **Auto-create (`auto_create`)**: when `true` and the target repository does not exist, the system creates it automatically before syncing. See [Auto-Create](#auto-create) below.
 - **No Releases sync**: only branches and tags.
 
 ### Rebase 模式
@@ -147,12 +148,23 @@ Configure `SYNC_DISPATCH_TOKEN` in the source repo (same PAT as in the center).
 - Rebase 冲突时跳过该条目，不中止整体流程
 - **注意：** `force_push` 和 `delete_remote` 设置在 rebase 模式下被忽略 — push 始终使用 `--force`（因为 rebase 改写历史），分支清理由 rebase 机制自身保证。
 
+### Auto-Create
+
+设置 `auto_create: true` 后，当目标仓库不存在时，系统会自动调用平台 API 创建仓库后再执行同步。
+
+- **GitHub**: `POST /user/repos` (Bearer token)
+- **Gitee**: `POST /api/v5/user/repos` (access_token)
+- **CNB**: `POST /repos` (Bearer token)
+- **GitCode**: `POST /api/v5/user/repos` (access_token)
+
+创建仓库使用 PAT 认证，即使目标平台配置了 SSH 认证。`visibility` 字段控制仓库可见性。
+
 ## Limitations
 
 - **Multiple SSH platforms**: the workflow writes SSH key to `~/.ssh/id_rsa`
   (one key per host). If you configure SSH for both GitHub and Gitee, only
   the first key is written. Workaround: use PAT for one of them.
-- **Target must exist**: `auto_create` is reserved for a future release.
+- **Auto-create**: set `auto_create: true` on a target to have it created automatically. See [Auto-Create](#auto-create) for details.
 
 ## Development
 
