@@ -234,6 +234,8 @@ def _should_auto_create(target: Endpoint, error: SyncError, tgt_cred: str | None
     if not tgt_cred:
         return False  # Need a token to create repos
     msg = str(error).lower()
+    # Include local-path keywords (used in tests with url_overrides) in addition
+    # to remote-URL keywords so the auto-create path works regardless of transport.
     return any(kw in msg for kw in (
         "not found",
         "repository not found",
