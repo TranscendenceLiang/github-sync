@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from src.strategies.base import StrategyResult, SyncStrategy
+from src.strategies.base import StrategyResult, SyncError, SyncStrategy
 
 
 class RebaseError(Exception):
@@ -121,6 +121,8 @@ class RebaseStrategy(SyncStrategy):
                 message="ok",
             )
 
+        except RebaseError as e:
+            raise SyncError(f"rebase sync failed: {e}") from e
         finally:
             shutil.rmtree(rebase_dir, ignore_errors=True)
 

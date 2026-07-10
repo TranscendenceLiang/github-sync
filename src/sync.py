@@ -35,6 +35,8 @@ class SyncResult:
     source: str
     targets_pushed: list[str]
     deleted: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    restored: list[str] = field(default_factory=list)
     message: str = ""
 
 
@@ -90,7 +92,7 @@ def sync_topology_entry(
             synced one. DANGEROUS: opt in only when you intend to discard stale
             target branches.
         mode: Sync strategy mode. "mirror" (default) force-pushes source onto
-            target. "rebase" will be added in a future task.
+            target. "rebase" replays source commits on top of target.
         preserve_files: Files to preserve during rebase mode (unused in mirror).
         url_overrides: Optional mapping platform -> URL. Used by tests to inject
             local bare repos. In production, URLs are built from build_url().
@@ -142,10 +144,9 @@ def sync_topology_entry(
             f"source branch {entry.source.branch!r} not found on {entry.source.platform}"
         )
 
-    # Resolve sync strategy (entry-level mode overrides the global default)
-    effective_mode = entry.mode or mode
+    # Resolve sync strategy
     strategy = _resolve_strategy(
-        effective_mode,
+        mode,
         force_push=force_push,
         delete_remote=delete_remote,
         preserve_files=preserve_files,
@@ -154,6 +155,8 @@ def sync_topology_entry(
 
     pushed: list[str] = []
     deleted: list[str] = []
+    skipped: list[str] = []
+    restored: list[str] = []
 
     for target in entry.targets:
         # Check target credentials.
@@ -194,6 +197,9 @@ def sync_topology_entry(
         if result.success:
             pushed.append(f"{tgt_id}#{target.branch}")
         deleted.extend(f"{tgt_id}#{d}" for d in result.deleted)
+        if result.skipped:
+            skipped.append(tgt_id)
+        restored.extend(result.restored)
 
     return SyncResult(
         success=True,
@@ -201,5 +207,7 @@ def sync_topology_entry(
         source=f"{entry.source.platform}:{entry.source.owner}/{entry.source.repo}#{entry.source.branch}",
         targets_pushed=pushed,
         deleted=deleted,
+        skipped=skipped,
+        restored=restored,
         message="ok",
     )
