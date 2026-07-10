@@ -3,8 +3,8 @@
 sync:
   settings:
     auto_create: false        # Not yet implemented; config slot reserved
-    force_push: false
-    delete_remote: false
+    force_push: true           # Overwrite diverged targets with --force
+    delete_remote: true        # Prune stale branches on targets after sync
 
   topology:
     - name: "github-qwenpaw-to-cnb"
@@ -18,5 +18,19 @@ sync:
         - platform: cnb
           owner: TranscendenceLiang
           repo: test
+          branch: main
+          auth: pat
+
+    - name: "github-ciphertalk-to-cnb"
+      source:
+        platform: github
+        owner: ILoveBingLu
+        repo: CipherTalk
+        branch: main
+        auth: ssh
+      targets:
+        - platform: cnb
+          owner: TranscendenceLiang
+          repo: CipherTalk
           branch: main
           auth: pat
