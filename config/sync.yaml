@@ -5,6 +5,9 @@ sync:
     auto_create: false        # Not yet implemented; config slot reserved
     force_push: true           # Overwrite diverged targets with --force
     delete_remote: true        # Prune stale branches on targets after sync
+    mode: mirror               # 全局默认: mirror | rebase
+    preserve_files:            # 全局默认保护文件列表（rebase 模式使用）
+      - .cnb.yml
 
   topology:
     - name: "github-qwenpaw-to-cnb"
@@ -22,6 +25,10 @@ sync:
           auth: pat
 
     - name: "github-ciphertalk-to-cnb"
+      mode: rebase              # 条目级覆盖: 使用 rebase
+      preserve_files:           # 覆盖全局: 仅保护以下文件
+        - .cnb.yml
+        - Dockerfile
       source:
         platform: github
         owner: ILoveBingLu

@@ -51,7 +51,11 @@ def run_sync(
     bypass_credentials = bool(url_overrides)
     failed = 0
     for entry in cfg.topology:
-        print(f"[INFO] syncing topology entry: {entry.name}")
+        # Resolve mode: entry-level overrides global
+        mode = entry.mode or cfg.settings.mode
+        preserve_files = entry.preserve_files if entry.preserve_files is not None else cfg.settings.preserve_files
+
+        print(f"[INFO] syncing topology entry: {entry.name} (mode={mode})")
         try:
             result = sync_topology_entry(
                 entry=entry,
@@ -59,6 +63,8 @@ def run_sync(
                 work_dir=work_dir / entry.name,
                 force_push=cfg.settings.force_push,
                 delete_remote=cfg.settings.delete_remote,
+                mode=mode,
+                preserve_files=preserve_files or [],
                 url_overrides=url_overrides,
                 bypass_credentials=bypass_credentials,
             )
