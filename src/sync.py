@@ -22,6 +22,7 @@ from src.strategies.base import (
     _merge_base,
 )
 from src.strategies.mirror import MirrorStrategy
+from src.strategies.rebase import RebaseStrategy
 
 if TYPE_CHECKING:
     from src.credential import Credential
@@ -57,7 +58,8 @@ def _resolve_strategy(
     """Create the appropriate SyncStrategy for the given mode."""
     if mode == "mirror":
         return MirrorStrategy(force_push=force_push, delete_remote=delete_remote)
-    # "rebase" will be handled in Task 3
+    elif mode == "rebase":
+        return RebaseStrategy(preserve_files=preserve_files, work_dir=work_dir)
     raise SyncError(f"unknown sync mode: {mode}")
 
 
@@ -189,7 +191,8 @@ def sync_topology_entry(
         # Format results with full target identifiers for callers.
         # Strategy returns raw URLs/names; sync_topology_entry adds context.
         tgt_id = f"{target.platform}:{target.owner}/{target.repo}"
-        pushed.append(f"{tgt_id}#{target.branch}")
+        if result.success:
+            pushed.append(f"{tgt_id}#{target.branch}")
         deleted.extend(f"{tgt_id}#{d}" for d in result.deleted)
 
     return SyncResult(
