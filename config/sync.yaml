@@ -13,7 +13,7 @@ sync:
         owner: TranscendenceLiang
         repo: QwenPaw
         branch: main
-        auth: ssh
+        auth: pat
       targets:
         - platform: cnb
           owner: TranscendenceLiang
@@ -27,7 +27,7 @@ sync:
         owner: ILoveBingLu
         repo: CipherTalk
         branch: main
-        auth: ssh
+        auth: pat
       targets:
         - platform: cnb
           owner: TranscendenceLiang
