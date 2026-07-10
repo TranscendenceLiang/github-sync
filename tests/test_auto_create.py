@@ -129,6 +129,8 @@ def test_create_repo_gitcode(tmp_path):
 
     cmd = " ".join(call_log[0])
     assert "api.gitcode.com/api/v5/user/repos" in cmd
+    assert "visibility" in cmd
+    assert "public" in cmd
 
 
 def test_create_repo_api_failure(tmp_path):

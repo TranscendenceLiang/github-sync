@@ -76,6 +76,7 @@ def sync_topology_entry(
     preserve_files: list[str] | None = None,
     url_overrides: dict[str, str] | None = None,
     bypass_credentials: bool = False,
+    auto_create: bool = False,
 ) -> SyncResult:
     """Execute a single topology entry: fetch source, push to all targets.
 
@@ -195,7 +196,7 @@ def sync_topology_entry(
         except SyncError as e:
             # Auto-create: if the target repo doesn't exist and auto_create
             # is enabled, create the repo and retry once.
-            if _should_auto_create(target, e, tgt_cred_value):
+            if _should_auto_create(target, e, tgt_cred_value, default_auto_create=auto_create):
                 _create_target_repo(target, tgt_cred_value)
                 result = strategy.sync(
                     source_dir=source_clone_dir,
@@ -227,9 +228,9 @@ def sync_topology_entry(
     )
 
 
-def _should_auto_create(target: Endpoint, error: SyncError, tgt_cred: str | None) -> bool:
+def _should_auto_create(target: Endpoint, error: SyncError, tgt_cred: str | None, default_auto_create: bool = False) -> bool:
     """Return True if this error indicates a missing repo and auto_create is enabled."""
-    if not target.auto_create:
+    if not (target.auto_create or default_auto_create):
         return False
     if not tgt_cred:
         return False  # Need a token to create repos
@@ -238,7 +239,6 @@ def _should_auto_create(target: Endpoint, error: SyncError, tgt_cred: str | None
     # to remote-URL keywords so the auto-create path works regardless of transport.
     return any(kw in msg for kw in (
         "not found",
-        "repository not found",
         "couldn't find",
         "does not appear to be a git repository",
         "could not read from remote repository",

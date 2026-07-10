@@ -67,6 +67,7 @@ def run_sync(
                 preserve_files=preserve_files or [],
                 url_overrides=url_overrides,
                 bypass_credentials=bypass_credentials,
+                auto_create=cfg.settings.auto_create,
             )
             print(
                 f"[OK] {entry.name}: {result.source} -> "
