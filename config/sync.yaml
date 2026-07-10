@@ -2,7 +2,7 @@
 # See docs/README.md for full schema documentation
 sync:
   settings:
-    auto_create: false        # Not yet implemented; config slot reserved
+    auto_create: true        # 全局启用自动创建，默认 false
     force_push: true           # Overwrite diverged targets with --force
     delete_remote: true        # Prune stale branches on targets after sync
     mode: mirror               # 全局默认: mirror | rebase
@@ -41,3 +41,5 @@ sync:
           repo: CipherTalk
           branch: main
           auth: pat
+          auto_create: true
+          visibility: private
