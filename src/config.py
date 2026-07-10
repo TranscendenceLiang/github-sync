@@ -54,6 +54,8 @@ class Endpoint:
     repo: str
     branch: str
     auth: str = "ssh"
+    auto_create: bool = False
+    visibility: str = "private"
 
     def __post_init__(self) -> None:
         if self.platform not in SUPPORTED_PLATFORMS:
@@ -63,6 +65,10 @@ class Endpoint:
             )
         if self.auth not in ("ssh", "pat"):
             raise ConfigError(f"auth must be 'ssh' or 'pat', got {self.auth!r}")
+        if self.visibility not in ("public", "private"):
+            raise ConfigError(
+                f"visibility must be 'public' or 'private', got {self.visibility!r}"
+            )
 
 
 @dataclass
@@ -98,6 +104,8 @@ def _parse_endpoint(data: Any, ctx: str) -> Endpoint:
             repo=str(data["repo"]),
             branch=str(data["branch"]),
             auth=str(data.get("auth", "ssh")).lower(),
+            auto_create=bool(data.get("auto_create", False)),
+            visibility=str(data.get("visibility", "private")).lower(),
         )
     except ConfigError:
         raise

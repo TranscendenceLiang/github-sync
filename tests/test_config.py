@@ -293,3 +293,57 @@ def test_load_config_preserve_files_not_list_raises(tmp_path):
     """))
     with pytest.raises(ConfigError, match="preserve_files"):
         load_config(cfg_file)
+
+
+def test_load_config_with_auto_create_and_visibility(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets:
+                - platform: cnb
+                  owner: myorg
+                  repo: myrepo
+                  branch: main
+                  auto_create: true
+                  visibility: public
+    """))
+    cfg = load_config(cfg_file)
+    t = cfg.topology[0].targets[0]
+    assert t.auto_create is True
+    assert t.visibility == "public"
+
+
+def test_load_config_auto_create_defaults(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets: [{platform: gitee, owner: o, repo: r, branch: main}]
+    """))
+    cfg = load_config(cfg_file)
+    t = cfg.topology[0].targets[0]
+    assert t.auto_create is False
+    assert t.visibility == "private"
+
+
+def test_load_config_invalid_visibility_raises(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets:
+                - platform: cnb
+                  owner: o
+                  repo: r
+                  branch: main
+                  visibility: secret
+    """))
+    with pytest.raises(ConfigError, match="visibility"):
+        load_config(cfg_file)
