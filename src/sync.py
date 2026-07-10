@@ -21,6 +21,7 @@ from src.strategies.base import (
     check_conflict,
     _merge_base,
 )
+from src.auto_create import CreateRepoRequest, create_repo, CreateRepoError
 from src.strategies.mirror import MirrorStrategy
 from src.strategies.rebase import RebaseStrategy
 
@@ -185,11 +186,24 @@ def sync_topology_entry(
             )
 
         # Delegate to strategy
-        result = strategy.sync(
-            source_dir=source_clone_dir,
-            target_url=target_url,
-            branch=entry.source.branch,
-        )
+        try:
+            result = strategy.sync(
+                source_dir=source_clone_dir,
+                target_url=target_url,
+                branch=entry.source.branch,
+            )
+        except SyncError as e:
+            # Auto-create: if the target repo doesn't exist and auto_create
+            # is enabled, create the repo and retry once.
+            if _should_auto_create(target, e, tgt_cred_value):
+                _create_target_repo(target, tgt_cred_value)
+                result = strategy.sync(
+                    source_dir=source_clone_dir,
+                    target_url=target_url,
+                    branch=entry.source.branch,
+                )
+            else:
+                raise
 
         # Format results with full target identifiers for callers.
         # Strategy returns raw URLs/names; sync_topology_entry adds context.
@@ -211,3 +225,36 @@ def sync_topology_entry(
         restored=restored,
         message="ok",
     )
+
+
+def _should_auto_create(target: Endpoint, error: SyncError, tgt_cred: str | None) -> bool:
+    """Return True if this error indicates a missing repo and auto_create is enabled."""
+    if not target.auto_create:
+        return False
+    if not tgt_cred:
+        return False  # Need a token to create repos
+    msg = str(error).lower()
+    return any(kw in msg for kw in (
+        "not found",
+        "repository not found",
+        "couldn't find",
+        "does not appear to be a git repository",
+        "could not read from remote repository",
+    ))
+
+
+def _create_target_repo(target: Endpoint, tgt_cred: str | None) -> None:
+    """Create a repository for the given target endpoint."""
+    request = CreateRepoRequest(
+        platform=target.platform,
+        owner=target.owner,
+        repo=target.repo,
+        visibility=target.visibility,
+        token=tgt_cred or "",
+    )
+    try:
+        create_repo(request)
+    except CreateRepoError as e:
+        raise SyncError(
+            f"failed to auto-create repo on {target.platform}:{target.owner}/{target.repo}: {e}"
+        ) from e

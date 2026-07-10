@@ -166,3 +166,90 @@ def test_sync_topology_entry_empty_target(tmp_path, make_local_repo):
         ["git", "rev-parse", "main"], cwd=src_bare, capture_output=True, text=True
     )
     assert dst_head.stdout.strip() == src_head.stdout.strip()
+
+
+def test_sync_topology_entry_auto_create_retries_push(tmp_path, make_local_repo, monkeypatch):
+    """When push fails with 'not found' and auto_create=True, repo is created and push retried."""
+    from src.auto_create import CreateRepoRequest
+
+    src = make_local_repo(commits=2, branch="main")
+    src_bare = Path(src["bare"])
+    dst_bare = tmp_path / "nonexistent.git"
+    # Do NOT init dst_bare — simulate non-existent target
+
+    creds = {
+        "github": Credential(ssh_key="k", pat=None),
+        "cnb": Credential(ssh_key=None, pat="cnb_token"),
+    }
+
+    # Create a target endpoint with auto_create=True
+    entry = TopologyEntry(
+        name="auto",
+        source=Endpoint(platform="github", owner="o", repo="r", branch="main", auth="ssh"),
+        targets=[Endpoint(
+            platform="cnb", owner="myorg", repo="myrepo",
+            branch="main", auth="pat",
+            auto_create=True, visibility="private",
+        )],
+    )
+
+    # Mock create_repo to actually create the bare repo
+    created_repos = set()
+    def mock_create_repo(req: CreateRepoRequest):
+        if req.platform == "cnb":
+            subprocess.run(["git", "init", "--bare", str(dst_bare)], check=True, capture_output=True)
+            created_repos.add(req.repo)
+
+    import src.sync as sync_module
+    monkeypatch.setattr(sync_module, "create_repo", mock_create_repo)
+
+    result = sync_topology_entry(
+        entry=entry,
+        creds=creds,
+        work_dir=tmp_path / "work",
+        force_push=True,
+        url_overrides={"github": str(src_bare), "cnb": str(dst_bare)},
+    )
+
+    assert result.success is True
+    assert "myrepo" in created_repos
+    # Verify dst has the source's content
+    dst_head = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=dst_bare, capture_output=True, text=True
+    )
+    src_head = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=src_bare, capture_output=True, text=True
+    )
+    assert dst_head.stdout.strip() == src_head.stdout.strip()
+
+
+def test_sync_topology_entry_auto_create_disabled_still_fails(tmp_path, make_local_repo):
+    """When auto_create=False, missing target repo still raises SyncError."""
+    src = make_local_repo(commits=2, branch="main")
+    src_bare = Path(src["bare"])
+    dst_bare = tmp_path / "nonexistent.git"
+    # dst does not exist
+
+    creds = {
+        "github": Credential(ssh_key="k", pat=None),
+        "cnb": Credential(ssh_key=None, pat="cnb_token"),
+    }
+
+    entry = TopologyEntry(
+        name="noauto",
+        source=Endpoint(platform="github", owner="o", repo="r", branch="main", auth="ssh"),
+        targets=[Endpoint(
+            platform="cnb", owner="myorg", repo="myrepo",
+            branch="main", auth="pat",
+            auto_create=False,  # disabled
+        )],
+    )
+
+    with pytest.raises(SyncError, match="not found|failed|mirror sync failed"):
+        sync_topology_entry(
+            entry=entry,
+            creds=creds,
+            work_dir=tmp_path / "work",
+            force_push=True,
+            url_overrides={"github": str(src_bare), "cnb": str(dst_bare)},
+        )
