@@ -58,6 +58,7 @@ def run_sync(
                 creds=creds,
                 work_dir=work_dir / entry.name,
                 force_push=cfg.settings.force_push,
+                delete_remote=cfg.settings.delete_remote,
                 url_overrides=url_overrides,
                 bypass_credentials=bypass_credentials,
             )

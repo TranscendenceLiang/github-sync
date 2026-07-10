@@ -86,3 +86,56 @@ def push_branch(repo: Path, remote: str, branch: str, force: bool = False) -> No
         args.append("--force")
     args += [remote, branch]
     _run(args, cwd=Path(repo))
+
+
+def list_remote_branches(repo: Path, remote: str = "origin") -> list[str]:
+    """Return remote branch names (without the ``remote/`` prefix).
+
+    HEAD symrefs (``origin/HEAD -> origin/main``) are skipped. Returns an
+    empty list if the remote has no branches or the lookup fails.
+    """
+    repo = Path(repo)
+    proc = subprocess.run(
+        ["git", "branch", "-r", "--list", f"{remote}/*"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    branches: list[str] = []
+    prefix = f"{remote}/"
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or " -> " in line:
+            continue
+        if line.startswith(prefix):
+            branches.append(line[len(prefix):])
+    return branches
+
+
+def list_remote_branches_url(url: str) -> list[str]:
+    """List branch names on a remote URL via ``git ls-remote --heads``.
+
+    Unlike :func:`list_remote_branches`, this does not require a local clone
+    and sees *every* branch on the remote (a single-branch clone would hide
+    the rest). Returns an empty list on failure.
+    """
+    proc = subprocess.run(
+        ["git", "ls-remote", "--heads", url],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    branches: list[str] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        ref = line.split("\t")[-1]
+        if ref.startswith("refs/heads/"):
+            branches.append(ref[len("refs/heads/"):])
+    return branches
+
+
+def delete_remote_branch(repo: Path, remote: str, branch: str) -> None:
+    """Delete a branch on the given remote."""
+    _run(["git", "push", "--delete", remote, branch], cwd=Path(repo))

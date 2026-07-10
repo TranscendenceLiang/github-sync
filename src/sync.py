@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +21,9 @@ from src.config import Endpoint, TopologyEntry
 from src.git_helper import (
     GitError,
     clone_or_fetch,
+    delete_remote_branch,
     get_head_sha,
+    list_remote_branches_url,
     push_branch,
 )
 from src.platform import build_url
@@ -40,6 +42,7 @@ class SyncResult:
     entry_name: str
     source: str
     targets_pushed: list[str]
+    deleted: list[str] = field(default_factory=list)
     message: str = ""
 
 
@@ -95,6 +98,7 @@ def sync_topology_entry(
     creds: dict[str, "Credential"],
     work_dir: Path,
     force_push: bool = False,
+    delete_remote: bool = False,
     url_overrides: dict[str, str] | None = None,
     bypass_credentials: bool = False,
 ) -> SyncResult:
@@ -104,7 +108,15 @@ def sync_topology_entry(
         entry: The TopologyEntry to execute.
         creds: Mapping platform -> Credential.
         work_dir: A working directory for clones.
-        force_push: Whether to allow non-fast-forward pushes (from settings).
+        force_push: When True, skip the divergence/conflict check and push with
+            ``--force``, overwriting any commits the target has that the source
+            does not. When False (default), a diverged target aborts the sync.
+        delete_remote: When True, after pushing, delete any branch that already
+            existed on the target (before this sync) but is not the branch being
+            synced. Effectively makes the target a strict mirror of the synced
+            branch. No-ops unless the target already had branches other than the
+            synced one. DANGEROUS: opt in only when you intend to discard stale
+            target branches.
         url_overrides: Optional mapping platform -> URL. Used by tests to inject
             local bare repos. In production, URLs are built from build_url().
         bypass_credentials: If True, skip the credential-availability check for
@@ -156,6 +168,7 @@ def sync_topology_entry(
         )
 
     pushed: list[str] = []
+    deleted: list[str] = []
 
     for target in entry.targets:
         # Check target credentials.
@@ -201,9 +214,17 @@ def sync_topology_entry(
         else:
             target_sha = get_head_sha(target_bare_dir, target.branch)
 
-        # Check for conflict
+        # Capture target branches BEFORE our push so delete_remote only removes
+        # pre-existing branches (never the branch we are about to sync). We list
+        # via ls-remote because the target clone is single-branch and would hide
+        # any other branches the target has.
+        target_branches_before = (
+            list_remote_branches_url(target_url) if delete_remote else []
+        )
+
+        # Check for conflict (skipped entirely when force_push is enabled)
         ancestor = _merge_base(source_clone_dir, source_sha, target_sha) if target_sha else None
-        if check_conflict(source_sha, target_sha, ancestor):
+        if not force_push and check_conflict(source_sha, target_sha, ancestor):
             raise SyncError(
                 f"conflict on entry {entry.name!r}: both source and target have "
                 f"diverged (source={source_sha[:7]}, target={target_sha[:7] if target_sha else 'none'})"
@@ -220,6 +241,21 @@ def sync_topology_entry(
             )
             push_branch(source_clone_dir, "target", entry.source.branch, force=force_push)
             pushed.append(f"{target.platform}:{target.owner}/{target.repo}#{target.branch}")
+
+            # delete_remote: prune target branches that existed before this sync
+            # but are not the branch we just synced (strict mirror mode).
+            if delete_remote and target_branches_before:
+                for tb in target_branches_before:
+                    if tb == target.branch:
+                        continue
+                    try:
+                        delete_remote_branch(source_clone_dir, "target", tb)
+                        deleted.append(f"{target.platform}:{target.owner}/{target.repo}#{tb}")
+                    except GitError as e:
+                        raise SyncError(
+                            f"failed to delete stale branch {tb!r} on "
+                            f"{target.platform}:{target.owner}/{target.repo}: {e}"
+                        ) from e
         except GitError as e:
             raise SyncError(
                 f"failed to push to {target.platform}:{target.owner}/{target.repo}: {e}"
@@ -232,5 +268,6 @@ def sync_topology_entry(
         entry_name=entry.name,
         source=f"{entry.source.platform}:{entry.source.owner}/{entry.source.repo}#{entry.source.branch}",
         targets_pushed=pushed,
+        deleted=deleted,
         message="ok",
     )
