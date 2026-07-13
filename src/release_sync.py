@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import fnmatch
+import json
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,11 +59,27 @@ class ReleaseClient(ABC):
     platform: str = ""
 
     @abstractmethod
-    def list_releases(self) -> list[ReleaseInfo]:
+    def list_releases(self, owner, repo, token) -> list[ReleaseInfo]:
         ...
 
     @abstractmethod
-    def create_release(self, release: ReleaseInfo) -> ReleaseInfo:
+    def get_release_by_tag(self, owner, repo, tag, token) -> ReleaseInfo | None:
+        ...
+
+    @abstractmethod
+    def create_release(self, owner, repo, token, info: ReleaseInfo) -> ReleaseInfo:
+        ...
+
+    @abstractmethod
+    def update_release(self, owner, repo, token, info: ReleaseInfo) -> ReleaseInfo:
+        ...
+
+    @abstractmethod
+    def download_asset(self, asset: AssetInfo, token, dest: Path) -> Path:
+        ...
+
+    @abstractmethod
+    def upload_asset(self, owner, repo, token, release_id, path: Path, name: str) -> AssetInfo:
         ...
 
 
@@ -89,3 +107,109 @@ RELEASE_CLIENTS: dict[str, type[ReleaseClient]] = {}
 
 def supports_releases(platform: str) -> bool:
     return platform in RELEASE_CLIENTS
+
+
+def _curl_json(args: list[str]) -> tuple[int, str]:
+    proc = subprocess.run(args, capture_output=True, text=True)
+    return proc.returncode, proc.stdout
+
+
+def _json_list(text: str) -> list:
+    return json.loads(text) if text.strip().startswith("[") else []
+
+
+def _json_obj(text: str) -> dict:
+    return json.loads(text) if text.strip().startswith("{") else {}
+
+
+class GitHubReleaseClient(ReleaseClient):
+    platform = "github"
+
+    def _hdr(self, token: str) -> list[str]:
+        return ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
+
+    def list_releases(self, owner, repo, token):
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+        rc, out = _curl_json(["curl", "-s", "-X", "GET", url] + self._hdr(token))
+        if rc != 0:
+            raise ReleaseSyncError(f"github list_releases failed (rc={rc})")
+        rels = []
+        for it in _json_list(out):
+            rels.append(ReleaseInfo(
+                tag_name=it.get("tag_name", ""),
+                name=it.get("name"),
+                body=it.get("body"),
+                draft=bool(it.get("draft", False)),
+                prerelease=bool(it.get("prerelease", False)),
+                release_id=str(it.get("id")),
+                published_at=it.get("published_at"),
+                assets=[AssetInfo(name=a.get("name", ""), size=int(a.get("size", 0)),
+                                  download_url=a.get("browser_download_url", ""),
+                                  asset_id=str(a.get("id"))) for a in it.get("assets", [])],
+            ))
+        return rels
+
+    def get_release_by_tag(self, owner, repo, tag, token):
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+        rc, out = _curl_json(["curl", "-s", "-X", "GET", url] + self._hdr(token))
+        if rc != 0:
+            return None
+        it = _json_obj(out)
+        if not it:
+            return None
+        return ReleaseInfo(
+            tag_name=it.get("tag_name", tag), name=it.get("name"), body=it.get("body"),
+            draft=bool(it.get("draft", False)), prerelease=bool(it.get("prerelease", False)),
+            release_id=str(it.get("id")),
+            assets=[AssetInfo(name=a.get("name", ""), size=int(a.get("size", 0)),
+                              download_url=a.get("browser_download_url", ""),
+                              asset_id=str(a.get("id"))) for a in it.get("assets", [])],
+        )
+
+    def create_release(self, owner, repo, token, info):
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+        body = json.dumps({
+            "tag_name": info.tag_name, "name": info.name, "body": info.body,
+            "draft": info.draft, "prerelease": info.prerelease,
+        })
+        rc, out = _curl_json(["curl", "-s", "-X", "POST", url, "--data", body] + self._hdr(token))
+        if rc != 0:
+            raise ReleaseSyncError(f"github create_release {info.tag_name} failed: {out}")
+        it = _json_obj(out)
+        info.release_id = str(it.get("id"))
+        return info
+
+    def update_release(self, owner, repo, token, info):
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases/{info.release_id}"
+        body = json.dumps({"name": info.name, "body": info.body,
+                           "draft": info.draft, "prerelease": info.prerelease})
+        rc, out = _curl_json(["curl", "-s", "-X", "PATCH", url, "--data", body] + self._hdr(token))
+        if rc != 0:
+            raise ReleaseSyncError(f"github update_release {info.tag_name} failed: {out}")
+        return info
+
+    def download_asset(self, asset, token, dest):
+        rc = subprocess.run([
+            "curl", "-s", "-L", "-H", f"Authorization: Bearer {token}",
+            "-o", str(dest), asset.download_url,
+        ], capture_output=True, text=True)
+        if rc.returncode != 0:
+            raise ReleaseSyncError(f"github download_asset {asset.name} failed")
+        return dest
+
+    def upload_asset(self, owner, repo, token, release_id, path, name):
+        url = f"https://uploads.github.com/repos/{owner}/{repo}/releases/{release_id}/assets?name={name}"
+        rc, out = _curl_json([
+            "curl", "-s", "-X", "POST", url,
+            "-H", f"Authorization: Bearer {token}",
+            "-H", "Content-Type: application/octet-stream",
+            "--data-binary", f"@{path}",
+        ])
+        if rc != 0:
+            raise ReleaseSyncError(f"github upload_asset {name} failed: {out}")
+        it = _json_obj(out)
+        return AssetInfo(name=it.get("name", name), size=int(it.get("size", 0)),
+                         download_url=it.get("browser_download_url", ""), asset_id=str(it.get("id")))
+
+
+RELEASE_CLIENTS["github"] = GitHubReleaseClient

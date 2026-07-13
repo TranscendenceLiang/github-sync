@@ -121,3 +121,79 @@ def test_filter_tags_none_returns_all():
     rels = [_rel("v1.0.0"), _rel("v2.0.0")]
     rf = ReleaseFilter(mode="tags", tags=None)
     assert len(filter_releases(rels, rf)) == 2
+
+
+from src.release_sync import GitHubReleaseClient
+import subprocess
+
+
+def _mock_curl(json_text, returncode=0):
+    original = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            stdout = json_text
+            stderr = ""
+        P.returncode = returncode
+        return P()
+    subprocess.run = _run
+    return original
+
+
+def test_github_list_releases():
+    sample = '[{"tag_name":"v1.0.0","name":"v1","body":"b","draft":false,' \
+             '"prerelease":true,"id":10,"published_at":"2024-01-01T00:00:00Z",' \
+             '"assets":[{"name":"a.bin","size":123,"browser_download_url":"http://x/a.bin","id":1}]}]'
+    orig = _mock_curl(sample)
+    try:
+        c = GitHubReleaseClient()
+        rels = c.list_releases("o", "r", "tok")
+    finally:
+        subprocess.run = orig
+    assert len(rels) == 1
+    r = rels[0]
+    assert r.tag_name == "v1.0.0" and r.release_id == "10" and r.prerelease is True
+    assert r.assets[0].name == "a.bin" and r.assets[0].size == 123
+
+
+def test_github_create_release_body():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0
+            stdout = '{"id":99}'
+            stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        info = ReleaseInfo(tag_name="v2", name="v2", body="x", draft=False, prerelease=False)
+        c.create_release("o", "r", "tok", info)
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "api.github.com/repos/o/r/releases" in cmd
+    assert "Authorization: Bearer tok" in cmd
+    assert '"tag_name": "v2"' in cmd
+
+
+def test_github_upload_asset_url():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0
+            stdout = '{"id":5,"name":"a.bin","size":10}'
+            stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        c.upload_asset("o", "r", "tok", "99", __import__("pathlib").Path("/tmp/a.bin"), "a.bin")
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "releases/99/assets?name=a.bin" in cmd
+    assert "application/octet-stream" in cmd
