@@ -627,3 +627,71 @@ def test_sync_releases_target_unsupported_warns(monkeypatch):
     settings = SyncSettings(sync_releases=True)
     res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
     assert any("does not support releases" in w for w in res.warnings)
+
+
+def test_sync_releases_update_uploads_only_missing_asset(monkeypatch):
+    rel = ReleaseInfo(tag_name="v1", name="v1",
+                      assets=[AssetInfo("a.bin", size=10, download_url="u"),
+                              AssetInfo("b.bin", size=10, download_url="u")])
+    src_client = _StubClient(releases=[rel])
+    tgt_client = _StubClient(by_tag={"v1": ReleaseInfo(tag_name="v1", release_id="EXIST",
+                                    assets=[AssetInfo("a.bin", size=10, download_url="u")])})
+    def _pick(platform, role="tgt"):
+        return src_client if role == "src" else tgt_client
+    monkeypatch.setattr("src.release_sync._client_for", _pick)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, SyncSettings(sync_releases=True))
+    assert res.releases_updated == 1
+    assert res.assets_uploaded == 1
+    assert tgt_client.uploaded == ["b.bin"]
+
+
+def test_sync_releases_asset_failure_isolation(monkeypatch):
+    class _Flaky(ReleaseClient):
+        platform = "github"
+        def __init__(self):
+            self.uploaded = []
+        def list_releases(self, o, r, t):
+            return [ReleaseInfo(tag_name="v1", assets=[
+                AssetInfo("ok.bin", size=1, download_url="u"),
+                AssetInfo("bad.bin", size=1, download_url="u")])]
+        def get_release_by_tag(self, o, r, tag, t):
+            return None
+        def create_release(self, o, r, t, info):
+            info.release_id = "N"
+            return info
+        def update_release(self, o, r, t, info):
+            return info
+        def download_asset(self, asset, t, dest):
+            if asset.name == "bad.bin":
+                raise ReleaseSyncError("dl fail")
+            return dest
+        def upload_asset(self, o, r, t, rid, path, name):
+            self.uploaded.append(name)
+            return AssetInfo(name=name, size=1, download_url="x")
+    src = _Flaky(); tgt = _Flaky()
+    monkeypatch.setattr("src.release_sync._client_for", lambda p, role="tgt": src if role == "src" else tgt)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, SyncSettings(sync_releases=True))
+    assert res.releases_created == 1
+    assert res.assets_uploaded == 1
+    assert res.assets_skipped == 1
+
+
+def test_sync_releases_target_upsert_error_recorded(monkeypatch):
+    class _BadUpsert(ReleaseClient):
+        platform = "github"
+        def list_releases(self, o, r, t):
+            return [ReleaseInfo(tag_name="v1")]
+        def get_release_by_tag(self, o, r, tag, t):
+            return None
+        def create_release(self, o, r, t, info):
+            raise ReleaseSyncError("create boom")
+        def update_release(self, o, r, t, info):
+            raise ReleaseSyncError("update boom")
+        def download_asset(self, asset, t, dest):
+            return dest
+        def upload_asset(self, o, r, t, rid, path, name):
+            return AssetInfo(name=name, size=1, download_url="x")
+    src = _BadUpsert(); tgt = _BadUpsert()
+    monkeypatch.setattr("src.release_sync._client_for", lambda p, role="tgt": src if role == "src" else tgt)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, SyncSettings(sync_releases=True))
+    assert res.errors and "upsert v1" in res.errors[0]

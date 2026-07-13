@@ -5,7 +5,7 @@ import fnmatch
 import json
 import subprocess
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 
@@ -394,29 +394,30 @@ def _sync_assets(client: "ReleaseClient", target, token: str, src_rel: "ReleaseI
                  result: "ReleaseSyncResult") -> None:
     if not src_rel.assets:
         return
-    tmp = Path(tempfile.mkdtemp(prefix="relsync-"))
-    for asset in src_rel.assets:
-        if asset.size > cap_bytes:
-            result.assets_skipped += 1
-            result.warnings.append(
-                f"asset {asset.name} ({asset.size} bytes) exceeds cap; skipped")
-            continue
-        if asset.name in existing_names:
-            continue  # 目标已有同名资产，免重复上传
-        dest = tmp / asset.name
-        try:
-            client.download_asset(asset, token, dest)
-        except ReleaseSyncError as e:
-            result.assets_skipped += 1
-            result.warnings.append(f"download asset {asset.name} failed: {e}")
-            continue
-        try:
-            client.upload_asset(target.owner, target.repo, token,
-                                tgt_rel.release_id or "", dest, asset.name)
-            result.assets_uploaded += 1
-        except ReleaseSyncError as e:
-            result.assets_skipped += 1
-            result.warnings.append(f"upload asset {asset.name} failed: {e}")
+    with tempfile.TemporaryDirectory(prefix="relsync-") as tmp:
+        tmp_path = Path(tmp)
+        for asset in src_rel.assets:
+            if asset.size > cap_bytes:
+                result.assets_skipped += 1
+                result.warnings.append(
+                    f"asset {asset.name} ({asset.size} bytes) exceeds cap; skipped")
+                continue
+            if asset.name in existing_names:
+                continue  # 目标已有同名资产，免重复上传
+            dest = tmp_path / asset.name
+            try:
+                client.download_asset(asset, token, dest)
+            except ReleaseSyncError as e:
+                result.assets_skipped += 1
+                result.warnings.append(f"download asset {asset.name} failed: {e}")
+                continue
+            try:
+                client.upload_asset(target.owner, target.repo, token,
+                                    tgt_rel.release_id or "", dest, asset.name)
+                result.assets_uploaded += 1
+            except ReleaseSyncError as e:
+                result.assets_skipped += 1
+                result.warnings.append(f"upload asset {asset.name} failed: {e}")
 
 
 def sync_releases(entry: "TopologyEntry", creds: dict, settings: "SyncSettings") -> "ReleaseSyncResult":
@@ -472,11 +473,11 @@ def sync_releases(entry: "TopologyEntry", creds: dict, settings: "SyncSettings")
                     tgt_rel = created
                     existing_names: set = set()  # 新建 release 服务端尚无资产
                 else:
-                    rel.release_id = existing.release_id
-                    updated = tgt_client.update_release(target.owner, target.repo, tgt_token, rel)
+                    existing_names = {a.name for a in existing.assets}
+                    upd_info = replace(rel, release_id=existing.release_id)
+                    updated = tgt_client.update_release(target.owner, target.repo, tgt_token, upd_info)
                     result.releases_updated += 1
                     tgt_rel = updated
-                    existing_names = {a.name for a in existing.assets}  # 服务端已有资产 → 幂等跳过
             except ReleaseSyncError as e:
                 result.errors.append(f"target {target.platform} upsert {rel.tag_name}: {e}")
                 continue
