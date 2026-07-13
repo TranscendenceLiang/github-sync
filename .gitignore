@@ -9,3 +9,6 @@ repos/
 
 # CGC KuzuDB database
 .cgc/
+
+# Git worktrees (isolated implementation workspaces)
+.worktrees/
