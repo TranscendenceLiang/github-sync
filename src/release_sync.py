@@ -215,3 +215,73 @@ class GitHubReleaseClient(ReleaseClient):
 
 
 RELEASE_CLIENTS["github"] = GitHubReleaseClient
+
+
+class GiteeReleaseClient(ReleaseClient):
+    platform = "gitee"
+
+    def _base(self, owner, repo):
+        return f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+    def list_releases(self, owner, repo, token):
+        url = f"{self._base(owner, repo)}/releases?access_token={token}&per_page=100"
+        rc, out = _curl_json(["curl", "-s", "-X", "GET", url])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee list_releases failed (rc={rc})")
+        return [_release_from_json(it) for it in _json_list(out)]
+
+    def get_release_by_tag(self, owner, repo, tag, token):
+        url = f"{self._base(owner, repo)}/releases/tags/{tag}?access_token={token}"
+        rc, out = _curl_json(["curl", "-s", "-X", "GET", url])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee get_release_by_tag {tag} failed (rc={rc})")
+        it = _json_obj(out)
+        if not it or "id" not in it:
+            return None
+        return _release_from_json(it, fallback_tag=tag)
+
+    def create_release(self, owner, repo, token, info):
+        import json
+        url = f"{self._base(owner, repo)}/releases?access_token={token}"
+        body = json.dumps({
+            "access_token": token, "tag_name": info.tag_name, "name": info.name,
+            "body": info.body, "prerelease": info.prerelease,
+        })
+        rc, out = _curl_json(["curl", "-s", "-X", "POST", url, "--data", body])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee create_release {info.tag_name} failed: {out}")
+        info.release_id = str(_json_obj(out).get("id"))
+        return info
+
+    def update_release(self, owner, repo, token, info):
+        import json
+        url = f"{self._base(owner, repo)}/releases/{info.release_id}?access_token={token}"
+        body = json.dumps({"name": info.name, "body": info.body, "prerelease": info.prerelease})
+        rc, out = _curl_json(["curl", "-s", "-X", "PATCH", url, "--data", body])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee update_release {info.tag_name} failed: {out}")
+        return info
+
+    def download_asset(self, asset, token, dest):
+        url = asset.download_url
+        if "access_token" not in url:
+            url = url + ("&" if "?" in url else "?") + f"access_token={token}"
+        rc, out = _curl_json(["curl", "-s", "-L", "-o", str(dest), url])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee download_asset {asset.name} failed: {out}")
+        return dest
+
+    def upload_asset(self, owner, repo, token, release_id, path, name):
+        url = f"{self._base(owner, repo)}/releases/{release_id}/attach_files?access_token={token}"
+        rc, out = _curl_json(["curl", "-s", "-X", "POST", url, "-F", f"file=@{path}"])
+        if rc != 0:
+            raise ReleaseSyncError(f"gitee upload_asset {name} failed: {out}")
+        it = _json_obj(out)
+        data = it.get("data", it)
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        return AssetInfo(name=data.get("name", name), size=int(data.get("size", 0)),
+                         download_url=data.get("browser_download_url", ""), asset_id=str(data.get("id")))
+
+
+RELEASE_CLIENTS["gitee"] = GiteeReleaseClient

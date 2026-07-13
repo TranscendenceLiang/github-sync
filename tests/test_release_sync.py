@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.release_sync import (
     AssetInfo,
+    GiteeReleaseClient,
     GitHubReleaseClient,
     ReleaseFilter,
     ReleaseInfo,
@@ -310,3 +311,85 @@ def test_github_download_asset_fail():
             c.download_asset(AssetInfo("a.bin", 1, "http://x/a.bin"), "tok", Path("/tmp/x"))
     finally:
         subprocess.run = orig
+
+def test_gitee_list_releases_uses_token():
+    sample = '[{"tag_name":"v1.0.0","name":"v1","body":"b","prerelease":false,' \
+             '"id":7,"created_at":"2024-01-01T00:00:00Z",' \
+             '"assets":[{"name":"a.bin","size":9,"browser_download_url":"http://x/a.bin","id":2}]}]'
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = sample; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        rels = c.list_releases("o", "r", "tok")
+    finally:
+        subprocess.run = orig
+    assert rels[0].tag_name == "v1.0.0"
+    assert rels[0].assets[0].size == 9
+
+def test_gitee_create_release_url():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0; stdout = '{"id":8}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        c.create_release("o", "r", "tok", ReleaseInfo(tag_name="v2"))
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "gitee.com/api/v5/repos/o/r/releases" in cmd
+    assert "access_token=tok" in cmd
+
+def test_gitee_get_release_by_tag_not_found():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = '{"message":"404 Not Found"}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        r = c.get_release_by_tag("o", "r", "missing", "tok")
+    finally:
+        subprocess.run = orig
+    assert r is None
+
+def test_gitee_get_release_by_tag_transport_error():
+    import pytest
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 1; stdout = ""; stderr = "boom"
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        with pytest.raises(ReleaseSyncError):
+            c.get_release_by_tag("o", "r", "v1", "tok")
+    finally:
+        subprocess.run = orig
+
+def test_gitee_download_asset_appends_token():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0; stdout = ""; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        c.download_asset(AssetInfo("a.bin", 1, "http://x/a.bin"), "tok", Path("/tmp/g.bin"))
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "access_token=tok" in cmd
