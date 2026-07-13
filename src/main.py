@@ -68,11 +68,25 @@ def run_sync(
                 url_overrides=url_overrides,
                 bypass_credentials=bypass_credentials,
                 auto_create=cfg.settings.auto_create,
+                settings=cfg.settings,
             )
             print(
                 f"[OK] {entry.name}: {result.source} -> "
                 f"{', '.join(result.targets_pushed) or '(no targets)'}"
             )
+            rr = result.release_result
+            if rr is not None:
+                print(
+                    f"[OK] {entry.name} releases: created={rr.releases_created} "
+                    f"updated={rr.releases_updated} skipped={rr.releases_skipped} | "
+                    f"assets: up={rr.assets_uploaded} skip={rr.assets_skipped}"
+                )
+                for w in rr.warnings:
+                    print(f"[WARN] {entry.name}: {w}")
+                for e in rr.errors:
+                    print(f"[ERROR] {entry.name}: {e}", file=sys.stderr)
+                if rr.errors:
+                    failed += 1
         except SyncError as e:
             print(f"[FAIL] {entry.name}: {e}", file=sys.stderr)
             failed += 1

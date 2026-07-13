@@ -42,6 +42,23 @@ def test_run_sync_missing_config_raises(tmp_path, monkeypatch):
         run_sync(tmp_path / "missing.yaml", work_dir=tmp_path / "work")
 
 
+def test_main_counts_release_errors(monkeypatch):
+    import src.main as m
+    import src.sync as s
+    orig = m.sync_topology_entry
+    def _fake(entry, **kw):
+        from src.sync import SyncResult
+        from src.release_sync import ReleaseSyncResult
+        return SyncResult(success=True, entry_name=entry.name, source="x",
+                          targets_pushed=[], release_result=ReleaseSyncResult(errors=["boom"]))
+    m.sync_topology_entry = _fake
+    try:
+        rc = run_sync("config/sync.yaml", url_overrides={"github": "x", "cnb": "y"})
+    finally:
+        m.sync_topology_entry = orig
+    assert rc == 1  # release fatal error counts as failure
+
+
 def test_run_sync_returns_nonzero_on_failure(tmp_path, monkeypatch):
     cfg_file = tmp_path / "sync.yaml"
     cfg_file.write_text(textwrap.dedent("""\
