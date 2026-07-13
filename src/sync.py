@@ -22,6 +22,7 @@ from src.strategies.base import (
     _merge_base,
 )
 from src.auto_create import CreateRepoRequest, create_repo, CreateRepoError
+import src.release_sync as _release_sync
 from src.strategies.mirror import MirrorStrategy
 from src.strategies.rebase import RebaseStrategy
 
@@ -39,6 +40,7 @@ class SyncResult:
     skipped: list[str] = field(default_factory=list)
     restored: list[str] = field(default_factory=list)
     message: str = ""
+    release_result: "ReleaseSyncResult | None" = None
 
 
 def _resolve_credentials(endpoint: Endpoint, creds: dict[str, "Credential"]) -> str | None:
@@ -77,6 +79,7 @@ def sync_topology_entry(
     url_overrides: dict[str, str] | None = None,
     bypass_credentials: bool = False,
     auto_create: bool = False,
+    settings: "SyncSettings | None" = None,
 ) -> SyncResult:
     """Execute a single topology entry: fetch source, push to all targets.
 
@@ -216,6 +219,12 @@ def sync_topology_entry(
             skipped.append(tgt_id)
         restored.extend(result.restored)
 
+    release_result = None
+    if settings is not None:
+        eff_on = entry.sync_releases if entry.sync_releases is not None else settings.sync_releases
+        if eff_on:
+            release_result = _release_sync.sync_releases(entry, creds, settings)
+
     return SyncResult(
         success=True,
         entry_name=entry.name,
@@ -225,6 +234,7 @@ def sync_topology_entry(
         skipped=skipped,
         restored=restored,
         message="ok",
+        release_result=release_result,
     )
 
 
