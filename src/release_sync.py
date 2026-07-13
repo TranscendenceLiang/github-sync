@@ -298,10 +298,16 @@ class CNBReleaseClient(ReleaseClient):
                               "-H", f"Authorization: Bearer {token}"])
         if rc != 0:
             raise ReleaseSyncError(f"cnb list_releases failed (rc={rc})")
-        it = _json_obj(out)
+        try:
+            parsed = json.loads(out) if out.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        it = parsed if isinstance(parsed, dict) else {"data": parsed}
         if "message" in it:
             return []  # 平台不支持 release API -> 优雅降级为空
-        items = it.get("data", it if isinstance(it, list) else [])
+        items = it.get("data", [])
+        if not isinstance(items, list):
+            items = []
         return [_release_from_json(r) for r in items]
 
     def get_release_by_tag(self, owner, repo, tag, token):
@@ -311,7 +317,6 @@ class CNBReleaseClient(ReleaseClient):
         return None
 
     def create_release(self, owner, repo, token, info):
-        import json
         url = f"{self._base(owner, repo)}/releases"
         body = json.dumps({"tag_name": info.tag_name, "name": info.name,
                            "body": info.body, "draft": info.draft, "prerelease": info.prerelease})
@@ -324,7 +329,6 @@ class CNBReleaseClient(ReleaseClient):
         return info
 
     def update_release(self, owner, repo, token, info):
-        import json
         url = f"{self._base(owner, repo)}/releases/{info.release_id}"
         body = json.dumps({"name": info.name, "body": info.body,
                            "draft": info.draft, "prerelease": info.prerelease})

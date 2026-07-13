@@ -488,3 +488,35 @@ def test_gitcode_inherits_gitee_base():
     for m in ("list_releases", "get_release_by_tag", "create_release",
               "update_release", "download_asset", "upload_asset"):
         assert callable(getattr(c, m, None))
+
+
+def test_cnb_create_release_sets_id():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = '{"id":42}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = CNBReleaseClient()
+        info = ReleaseInfo(tag_name="v1", name="v1")
+        res = c.create_release("o", "r", "tok", info)
+    finally:
+        subprocess.run = orig
+    assert res.release_id == "42"
+
+def test_cnb_upload_asset():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0
+            stdout = '{"name":"a.bin","size":7,"download_url":"http://x/a.bin","id":5}'
+            stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = CNBReleaseClient()
+        a = c.upload_asset("o", "r", "tok", "1", Path("/tmp/a.bin"), "a.bin")
+    finally:
+        subprocess.run = orig
+    assert a.download_url == "http://x/a.bin" and a.asset_id == "5"
