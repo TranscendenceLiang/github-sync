@@ -140,7 +140,7 @@ def _release_from_json(it: dict, fallback_tag: str = "") -> "ReleaseInfo":
         draft=bool(it.get("draft", False)),
         prerelease=bool(it.get("prerelease", False)),
         release_id=str(it.get("id")) if it.get("id") is not None else None,
-        published_at=it.get("published_at"),
+        published_at=it.get("published_at") or it.get("created_at"),
         assets=[_asset_from_json(a) for a in it.get("assets", [])],
     )
 
@@ -162,7 +162,7 @@ class GitHubReleaseClient(ReleaseClient):
         url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
         rc, out = _curl_json(["curl", "-s", "-X", "GET", url] + self._hdr(token))
         if rc != 0:
-            raise ReleaseSyncError(f"github get_release_by_tag {tag} failed (rc={rc})")
+            raise ReleaseSyncError(f"github get_release_by_tag {tag} failed (rc={rc}): {out}")
         it = _json_obj(out)
         if not it or "id" not in it:
             return None  # 404 / 不存在
@@ -234,14 +234,13 @@ class GiteeReleaseClient(ReleaseClient):
         url = f"{self._base(owner, repo)}/releases/tags/{tag}?access_token={token}"
         rc, out = _curl_json(["curl", "-s", "-X", "GET", url])
         if rc != 0:
-            raise ReleaseSyncError(f"gitee get_release_by_tag {tag} failed (rc={rc})")
+            raise ReleaseSyncError(f"gitee get_release_by_tag {tag} failed (rc={rc}): {out}")
         it = _json_obj(out)
         if not it or "id" not in it:
             return None
         return _release_from_json(it, fallback_tag=tag)
 
     def create_release(self, owner, repo, token, info):
-        import json
         url = f"{self._base(owner, repo)}/releases?access_token={token}"
         body = json.dumps({
             "access_token": token, "tag_name": info.tag_name, "name": info.name,
@@ -254,7 +253,6 @@ class GiteeReleaseClient(ReleaseClient):
         return info
 
     def update_release(self, owner, repo, token, info):
-        import json
         url = f"{self._base(owner, repo)}/releases/{info.release_id}?access_token={token}"
         body = json.dumps({"name": info.name, "body": info.body, "prerelease": info.prerelease})
         rc, out = _curl_json(["curl", "-s", "-X", "PATCH", url, "--data", body])

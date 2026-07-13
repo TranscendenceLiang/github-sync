@@ -348,6 +348,25 @@ def test_gitee_create_release_url():
     assert "gitee.com/api/v5/repos/o/r/releases" in cmd
     assert "access_token=tok" in cmd
 
+def test_gitee_update_release():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0; stdout = '{"id":10}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        info = ReleaseInfo(tag_name="v1", name="new", body="b", release_id="10")
+        c.update_release("o", "r", "tok", info)
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "gitee.com/api/v5/repos/o/r/releases/10" in cmd and "PATCH" in cmd
+    assert '"name": "new"' in cmd and '"body": "b"' in cmd
+
 def test_gitee_get_release_by_tag_not_found():
     orig = subprocess.run
     def _run(args, **kwargs):
