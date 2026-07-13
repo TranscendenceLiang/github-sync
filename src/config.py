@@ -32,6 +32,7 @@ from typing import Any
 import yaml
 
 from src.platform import SUPPORTED_PLATFORMS
+from src.release_sync import ReleaseFilter
 
 
 class ConfigError(Exception):
@@ -45,6 +46,9 @@ class SyncSettings:
     delete_remote: bool = False
     mode: str = "mirror"
     preserve_files: list[str] | None = None
+    sync_releases: bool = False
+    release_asset_max_size_mb: int = 50
+    release_filter: ReleaseFilter = field(default_factory=ReleaseFilter)
 
 
 @dataclass
@@ -78,6 +82,8 @@ class TopologyEntry:
     targets: list[Endpoint] = field(default_factory=list)
     mode: str | None = None
     preserve_files: list[str] | None = None
+    sync_releases: bool | None = None
+    release_filter: ReleaseFilter | None = None
 
     def __post_init__(self) -> None:
         if not self.targets:
@@ -138,7 +144,43 @@ def _parse_entry(data: Any) -> TopologyEntry:
             raise ConfigError(f"topology[{name}].preserve_files must be a list of strings")
         preserve_files = [str(f) for f in pf_raw]
 
-    return TopologyEntry(name=name, source=source, targets=targets, mode=mode, preserve_files=preserve_files)
+    rf_raw = data.get("release_filter")
+    release_filter = _parse_release_filter(rf_raw) if rf_raw is not None else None
+    sync_releases = data.get("sync_releases", None)
+    if sync_releases is not None:
+        sync_releases = bool(sync_releases)
+
+    return TopologyEntry(
+        name=name, source=source, targets=targets, mode=mode,
+        preserve_files=preserve_files,
+        sync_releases=sync_releases,
+        release_filter=release_filter,
+    )
+
+
+def _parse_release_filter(data: Any) -> ReleaseFilter:
+    if data is None:
+        return ReleaseFilter()
+    if not isinstance(data, dict):
+        raise ConfigError("release_filter must be a mapping")
+    mode = str(data.get("mode", "all")).lower()
+    if mode not in ("all", "latest", "pattern", "tags"):
+        raise ConfigError(
+            f"release_filter.mode must be one of all|latest|pattern|tags, got {mode!r}"
+        )
+    latest_count = int(data.get("latest_count", 1))
+    pattern = data.get("pattern")
+    tags = data.get("tags")
+    if tags is not None and not isinstance(tags, list):
+        raise ConfigError("release_filter.tags must be a list of strings")
+    include_drafts = bool(data.get("include_drafts", False))
+    return ReleaseFilter(
+        mode=mode,
+        latest_count=latest_count,
+        pattern=pattern,
+        tags=tags,
+        include_drafts=include_drafts,
+    )
 
 
 def _parse_settings(data: Any) -> SyncSettings:
@@ -161,6 +203,9 @@ def _parse_settings(data: Any) -> SyncSettings:
         delete_remote=bool(data.get("delete_remote", False)),
         mode=mode,
         preserve_files=preserve_files,
+        sync_releases=bool(data.get("sync_releases", False)),
+        release_asset_max_size_mb=int(data.get("release_asset_max_size_mb", 50)),
+        release_filter=_parse_release_filter(data.get("release_filter")),
     )
 
 

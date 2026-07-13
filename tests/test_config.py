@@ -347,3 +347,56 @@ def test_load_config_invalid_visibility_raises(tmp_path):
     """))
     with pytest.raises(ConfigError, match="visibility"):
         load_config(cfg_file)
+
+
+from src.config import load_config, ConfigError
+from src.release_sync import ReleaseFilter
+
+def test_settings_release_defaults():
+    from src.config import _parse_settings
+    s = _parse_settings({})
+    assert s.sync_releases is False
+    assert s.release_asset_max_size_mb == 50
+    assert isinstance(s.release_filter, ReleaseFilter)
+    assert s.release_filter.mode == "all"
+
+def test_parse_settings_release_on():
+    from src.config import _parse_settings
+    s = _parse_settings({
+        "sync_releases": True,
+        "release_asset_max_size_mb": 100,
+        "release_filter": {"mode": "pattern", "pattern": "v*"},
+    })
+    assert s.sync_releases is True
+    assert s.release_asset_max_size_mb == 100
+    assert s.release_filter.mode == "pattern"
+    assert s.release_filter.pattern == "v*"
+
+def test_parse_settings_release_filter_invalid_mode():
+    import pytest
+    from src.config import _parse_settings
+    with pytest.raises(ConfigError, match="release_filter.mode"):
+        _parse_settings({"release_filter": {"mode": "bogus"}})
+
+def test_parse_entry_release_override():
+    from src.config import _parse_entry
+    e = _parse_entry({
+        "name": "x",
+        "sync_releases": False,
+        "source": {"platform": "github", "owner": "o", "repo": "r", "branch": "main"},
+        "targets": [{"platform": "gitee", "owner": "o", "repo": "r", "branch": "main"}],
+        "release_filter": {"mode": "tags", "tags": ["v1.0.0"]},
+    })
+    assert e.sync_releases is False
+    assert e.release_filter.mode == "tags"
+    assert e.release_filter.tags == ["v1.0.0"]
+
+def test_parse_entry_release_inherits_none():
+    from src.config import _parse_entry
+    e = _parse_entry({
+        "name": "x",
+        "source": {"platform": "github", "owner": "o", "repo": "r", "branch": "main"},
+        "targets": [{"platform": "gitee", "owner": "o", "repo": "r", "branch": "main"}],
+    })
+    assert e.sync_releases is None
+    assert e.release_filter is None
