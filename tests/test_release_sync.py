@@ -19,12 +19,24 @@ def _rel(tag, draft=False, published=None, assets=None):
 
 
 def test_filter_all():
-    """mode=all returns every release, including drafts."""
+    """mode=all + 默认 include_drafts=False 剔除草稿（返回全部非草稿 release）。"""
     releases = [
         _rel("v1.0.0", published="2024-01-01"),
         _rel("v2.0.0", draft=True, published="2024-02-01"),
     ]
     rf = ReleaseFilter(mode="all")
+    result = filter_releases(releases, rf)
+    assert len(result) == 1
+    assert result[0].tag_name == "v1.0.0"
+
+
+def test_filter_all_include_drafts():
+    """mode=all + include_drafts=True 返回所有 release（含草稿）。"""
+    releases = [
+        _rel("v1.0.0", published="2024-01-01"),
+        _rel("v2.0.0", draft=True, published="2024-02-01"),
+    ]
+    rf = ReleaseFilter(mode="all", include_drafts=True)
     result = filter_releases(releases, rf)
     assert len(result) == 2
 

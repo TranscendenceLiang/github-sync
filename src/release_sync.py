@@ -66,11 +66,9 @@ class ReleaseClient(ABC):
 
 
 def filter_releases(releases: list[ReleaseInfo], rf: ReleaseFilter) -> list[ReleaseInfo]:
-    # `mode="all"` returns everything verbatim (incl. drafts). Draft filtering via
-    # `include_drafts` only applies to the subsetting modes below.
+    out = [r for r in releases if (not r.draft) or rf.include_drafts]  # 全局 draft 门控
     if rf.mode == "all":
-        return list(releases)
-    out = [r for r in releases if (not r.draft) or rf.include_drafts]
+        return out
     if rf.mode == "latest":
         ordered = sorted(out, key=lambda r: r.published_at or "", reverse=True)
         return ordered[: max(1, rf.latest_count)]
