@@ -241,6 +241,7 @@ class GiteeReleaseClient(ReleaseClient):
         return _release_from_json(it, fallback_tag=tag)
 
     def create_release(self, owner, repo, token, info):
+        # Gitee has no draft field; only prerelease is supported.
         url = f"{self._base(owner, repo)}/releases?access_token={token}"
         body = json.dumps({
             "access_token": token, "tag_name": info.tag_name, "name": info.name,
@@ -253,6 +254,7 @@ class GiteeReleaseClient(ReleaseClient):
         return info
 
     def update_release(self, owner, repo, token, info):
+        # Gitee has no draft field; only prerelease is supported.
         url = f"{self._base(owner, repo)}/releases/{info.release_id}?access_token={token}"
         body = json.dumps({"name": info.name, "body": info.body, "prerelease": info.prerelease})
         rc, out = _curl_json(["curl", "-s", "-X", "PATCH", url, "--data", body])
@@ -278,8 +280,7 @@ class GiteeReleaseClient(ReleaseClient):
         data = it.get("data", it)
         if isinstance(data, list):
             data = data[0] if data else {}
-        return AssetInfo(name=data.get("name", name), size=int(data.get("size", 0)),
-                         download_url=data.get("browser_download_url", ""), asset_id=str(data.get("id")))
+        return _asset_from_json(data)
 
 
 RELEASE_CLIENTS["gitee"] = GiteeReleaseClient

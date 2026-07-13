@@ -341,12 +341,13 @@ def test_gitee_create_release_url():
     subprocess.run = _run
     try:
         c = GiteeReleaseClient()
-        c.create_release("o", "r", "tok", ReleaseInfo(tag_name="v2"))
+        res = c.create_release("o", "r", "tok", ReleaseInfo(tag_name="v2"))
     finally:
         subprocess.run = orig
     cmd = " ".join(calls[0])
     assert "gitee.com/api/v5/repos/o/r/releases" in cmd
     assert "access_token=tok" in cmd
+    assert res.release_id == "8"
 
 def test_gitee_update_release():
     calls = []
@@ -412,3 +413,20 @@ def test_gitee_download_asset_appends_token():
         subprocess.run = orig
     cmd = " ".join(calls[0])
     assert "access_token=tok" in cmd
+
+def test_gitee_upload_asset():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0
+            stdout = '{"data":{"name":"a.bin","size":10,"download_url":"http://x/a.bin","id":3}}'
+            stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GiteeReleaseClient()
+        a = c.upload_asset("o", "r", "tok", "10", Path("/tmp/a.bin"), "a.bin")
+    finally:
+        subprocess.run = orig
+    assert a.name == "a.bin" and a.size == 10
+    assert a.download_url == "http://x/a.bin" and a.asset_id == "3"
