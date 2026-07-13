@@ -1,8 +1,12 @@
 """Tests for release_sync module (data model + filter_releases)."""
+from pathlib import Path
+
 from src.release_sync import (
     AssetInfo,
+    GitHubReleaseClient,
     ReleaseFilter,
     ReleaseInfo,
+    ReleaseSyncError,
     filter_releases,
     supports_releases,
 )
@@ -123,7 +127,6 @@ def test_filter_tags_none_returns_all():
     assert len(filter_releases(rels, rf)) == 2
 
 
-from src.release_sync import GitHubReleaseClient
 import subprocess
 
 
@@ -197,3 +200,113 @@ def test_github_upload_asset_url():
     cmd = " ".join(calls[0])
     assert "releases/99/assets?name=a.bin" in cmd
     assert "application/octet-stream" in cmd
+
+
+def test_github_create_release_sets_id():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = '{"id":99}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        info = ReleaseInfo(tag_name="v2", name="v2", body="x")
+        res = c.create_release("o", "r", "tok", info)
+    finally:
+        subprocess.run = orig
+    assert res.release_id == "99"
+
+def test_github_get_release_by_tag_found():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0
+            stdout = '{"tag_name":"v1","name":"v1","id":10,"assets":[{"name":"a.bin","size":5,"browser_download_url":"u","id":1}]}'
+            stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        r = c.get_release_by_tag("o", "r", "v1", "tok")
+    finally:
+        subprocess.run = orig
+    assert r is not None and r.release_id == "10" and r.assets[0].name == "a.bin"
+
+def test_github_get_release_by_tag_not_found():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = '{"message":"Not Found"}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        r = c.get_release_by_tag("o", "r", "missing", "tok")
+    finally:
+        subprocess.run = orig
+    assert r is None
+
+def test_github_get_release_by_tag_transport_error():
+    import pytest
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 1; stdout = ""; stderr = "boom"
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        with pytest.raises(ReleaseSyncError):
+            c.get_release_by_tag("o", "r", "v1", "tok")
+    finally:
+        subprocess.run = orig
+
+def test_github_update_release():
+    calls = []
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        calls.append(args)
+        class P:
+            returncode = 0; stdout = '{"id":10}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        info = ReleaseInfo(tag_name="v1", name="new", body="b", release_id="10")
+        c.update_release("o", "r", "tok", info)
+    finally:
+        subprocess.run = orig
+    cmd = " ".join(calls[0])
+    assert "releases/10" in cmd and "PATCH" in cmd
+    assert '"name": "new"' in cmd and '"body": "b"' in cmd
+
+def test_github_download_asset_ok():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = ""; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        dest = Path("/tmp/relsync_a.bin")
+        res = c.download_asset(AssetInfo("a.bin", 1, "http://x/a.bin"), "tok", dest)
+    finally:
+        subprocess.run = orig
+    assert res == dest
+
+def test_github_download_asset_fail():
+    import pytest
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 1; stdout = "err"; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = GitHubReleaseClient()
+        with pytest.raises(ReleaseSyncError):
+            c.download_asset(AssetInfo("a.bin", 1, "http://x/a.bin"), "tok", Path("/tmp/x"))
+    finally:
+        subprocess.run = orig

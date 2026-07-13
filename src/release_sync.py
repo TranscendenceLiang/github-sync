@@ -110,6 +110,7 @@ def supports_releases(platform: str) -> bool:
 
 
 def _curl_json(args: list[str]) -> tuple[int, str]:
+    # 返回 (returncode, 原始 stdout 文本)
     proc = subprocess.run(args, capture_output=True, text=True)
     return proc.returncode, proc.stdout
 
@@ -120,6 +121,28 @@ def _json_list(text: str) -> list:
 
 def _json_obj(text: str) -> dict:
     return json.loads(text) if text.strip().startswith("{") else {}
+
+
+def _asset_from_json(a: dict) -> "AssetInfo":
+    return AssetInfo(
+        name=a.get("name", ""),
+        size=int(a.get("size", 0)),
+        download_url=a.get("browser_download_url", "") or a.get("download_url", ""),
+        asset_id=str(a.get("id")) if a.get("id") is not None else None,
+    )
+
+
+def _release_from_json(it: dict, fallback_tag: str = "") -> "ReleaseInfo":
+    return ReleaseInfo(
+        tag_name=it.get("tag_name", fallback_tag),
+        name=it.get("name"),
+        body=it.get("body"),
+        draft=bool(it.get("draft", False)),
+        prerelease=bool(it.get("prerelease", False)),
+        release_id=str(it.get("id")) if it.get("id") is not None else None,
+        published_at=it.get("published_at"),
+        assets=[_asset_from_json(a) for a in it.get("assets", [])],
+    )
 
 
 class GitHubReleaseClient(ReleaseClient):
@@ -133,38 +156,17 @@ class GitHubReleaseClient(ReleaseClient):
         rc, out = _curl_json(["curl", "-s", "-X", "GET", url] + self._hdr(token))
         if rc != 0:
             raise ReleaseSyncError(f"github list_releases failed (rc={rc})")
-        rels = []
-        for it in _json_list(out):
-            rels.append(ReleaseInfo(
-                tag_name=it.get("tag_name", ""),
-                name=it.get("name"),
-                body=it.get("body"),
-                draft=bool(it.get("draft", False)),
-                prerelease=bool(it.get("prerelease", False)),
-                release_id=str(it.get("id")),
-                published_at=it.get("published_at"),
-                assets=[AssetInfo(name=a.get("name", ""), size=int(a.get("size", 0)),
-                                  download_url=a.get("browser_download_url", ""),
-                                  asset_id=str(a.get("id"))) for a in it.get("assets", [])],
-            ))
-        return rels
+        return [_release_from_json(it) for it in _json_list(out)]
 
     def get_release_by_tag(self, owner, repo, tag, token):
         url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
         rc, out = _curl_json(["curl", "-s", "-X", "GET", url] + self._hdr(token))
         if rc != 0:
-            return None
+            raise ReleaseSyncError(f"github get_release_by_tag {tag} failed (rc={rc})")
         it = _json_obj(out)
-        if not it:
-            return None
-        return ReleaseInfo(
-            tag_name=it.get("tag_name", tag), name=it.get("name"), body=it.get("body"),
-            draft=bool(it.get("draft", False)), prerelease=bool(it.get("prerelease", False)),
-            release_id=str(it.get("id")),
-            assets=[AssetInfo(name=a.get("name", ""), size=int(a.get("size", 0)),
-                              download_url=a.get("browser_download_url", ""),
-                              asset_id=str(a.get("id"))) for a in it.get("assets", [])],
-        )
+        if not it or "id" not in it:
+            return None  # 404 / 不存在
+        return _release_from_json(it, fallback_tag=tag)
 
     def create_release(self, owner, repo, token, info):
         url = f"https://api.github.com/repos/{owner}/{repo}/releases"
@@ -189,12 +191,12 @@ class GitHubReleaseClient(ReleaseClient):
         return info
 
     def download_asset(self, asset, token, dest):
-        rc = subprocess.run([
+        rc, out = _curl_json([
             "curl", "-s", "-L", "-H", f"Authorization: Bearer {token}",
             "-o", str(dest), asset.download_url,
-        ], capture_output=True, text=True)
-        if rc.returncode != 0:
-            raise ReleaseSyncError(f"github download_asset {asset.name} failed")
+        ])
+        if rc != 0:
+            raise ReleaseSyncError(f"github download_asset {asset.name} failed: {out}")
         return dest
 
     def upload_asset(self, owner, repo, token, release_id, path, name):
