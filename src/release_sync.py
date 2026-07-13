@@ -366,3 +366,119 @@ class GitCodeReleaseClient(GiteeReleaseClient):
 
 RELEASE_CLIENTS["cnb"] = CNBReleaseClient
 RELEASE_CLIENTS["gitcode"] = GitCodeReleaseClient
+
+
+import tempfile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.config import SyncSettings, TopologyEntry
+    from src.credential import Credential
+
+
+def _client_for(platform: str, role: str = "tgt") -> "ReleaseClient":
+    """Return a fresh ReleaseClient instance for the platform (role is a hint only)."""
+    cls = RELEASE_CLIENTS.get(platform)
+    if cls is None:
+        raise ReleaseSyncError(f"platform {platform!r} has no release client")
+    return cls()
+
+
+def _cred_token(creds: dict, platform: str) -> "str | None":
+    cred = creds.get(platform)
+    return cred.pat if cred and getattr(cred, "pat", None) else None
+
+
+def _sync_assets(client: "ReleaseClient", target, token: str, src_rel: "ReleaseInfo",
+                 tgt_rel: "ReleaseInfo", existing_names: set, cap_bytes: int,
+                 result: "ReleaseSyncResult") -> None:
+    if not src_rel.assets:
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="relsync-"))
+    for asset in src_rel.assets:
+        if asset.size > cap_bytes:
+            result.assets_skipped += 1
+            result.warnings.append(
+                f"asset {asset.name} ({asset.size} bytes) exceeds cap; skipped")
+            continue
+        if asset.name in existing_names:
+            continue  # 目标已有同名资产，免重复上传
+        dest = tmp / asset.name
+        try:
+            client.download_asset(asset, token, dest)
+        except ReleaseSyncError as e:
+            result.assets_skipped += 1
+            result.warnings.append(f"download asset {asset.name} failed: {e}")
+            continue
+        try:
+            client.upload_asset(target.owner, target.repo, token,
+                                tgt_rel.release_id or "", dest, asset.name)
+            result.assets_uploaded += 1
+        except ReleaseSyncError as e:
+            result.assets_skipped += 1
+            result.warnings.append(f"upload asset {asset.name} failed: {e}")
+
+
+def sync_releases(entry: "TopologyEntry", creds: dict, settings: "SyncSettings") -> "ReleaseSyncResult":
+    result = ReleaseSyncResult()
+    eff_on = entry.sync_releases if entry.sync_releases is not None else settings.sync_releases
+    if not eff_on:
+        return result
+    rf = entry.release_filter if entry.release_filter is not None else settings.release_filter
+    cap_bytes = settings.release_asset_max_size_mb * 1024 * 1024
+
+    src = entry.source
+    src_token = _cred_token(creds, src.platform)
+    if not src_token:
+        result.warnings.append(f"source {src.platform} has no PAT; release sync skipped")
+        return result
+    if not supports_releases(src.platform):
+        result.warnings.append(f"source {src.platform} does not support releases; skipped")
+        return result
+
+    try:
+        src_client = _client_for(src.platform, role="src")
+        releases = src_client.list_releases(src.owner, src.repo, src_token)
+    except ReleaseSyncError as e:
+        result.errors.append(f"source {src.platform}:{src.owner}/{src.repo} list failed: {e}")
+        return result
+
+    filtered = filter_releases(releases, rf)
+    result.releases_skipped = len(releases) - len(filtered)
+
+    for target in entry.targets:
+        if not supports_releases(target.platform):
+            result.warnings.append(f"target {target.platform} does not support releases; skipped")
+            continue
+        tgt_token = _cred_token(creds, target.platform)
+        if not tgt_token:
+            result.warnings.append(f"target {target.platform} has no PAT; skipped")
+            continue
+        try:
+            tgt_client = _client_for(target.platform, role="tgt")
+        except ReleaseSyncError as e:
+            result.warnings.append(f"target {target.platform} client unavailable: {e}")
+            continue
+        for rel in filtered:
+            try:
+                existing = tgt_client.get_release_by_tag(target.owner, target.repo, rel.tag_name, tgt_token)
+            except ReleaseSyncError as e:
+                result.errors.append(f"target {target.platform} get {rel.tag_name}: {e}")
+                continue
+            try:
+                if existing is None:
+                    created = tgt_client.create_release(target.owner, target.repo, tgt_token, rel)
+                    result.releases_created += 1
+                    tgt_rel = created
+                    existing_names: set = set()  # 新建 release 服务端尚无资产
+                else:
+                    rel.release_id = existing.release_id
+                    updated = tgt_client.update_release(target.owner, target.repo, tgt_token, rel)
+                    result.releases_updated += 1
+                    tgt_rel = updated
+                    existing_names = {a.name for a in existing.assets}  # 服务端已有资产 → 幂等跳过
+            except ReleaseSyncError as e:
+                result.errors.append(f"target {target.platform} upsert {rel.tag_name}: {e}")
+                continue
+            _sync_assets(tgt_client, target, tgt_token, rel, tgt_rel, existing_names, cap_bytes, result)
+    return result

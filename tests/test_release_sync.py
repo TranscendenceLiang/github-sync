@@ -7,12 +7,17 @@ from src.release_sync import (
     GiteeReleaseClient,
     GitHubReleaseClient,
     GitCodeReleaseClient,
+    ReleaseClient,
     ReleaseFilter,
     ReleaseInfo,
     ReleaseSyncError,
+    ReleaseSyncResult,
     filter_releases,
     supports_releases,
+    sync_releases,
 )
+from src.credential import Credential
+from src.config import SyncSettings, TopologyEntry, Endpoint
 
 
 def _rel(tag, draft=False, published=None, assets=None):
@@ -520,3 +525,105 @@ def test_cnb_upload_asset():
     finally:
         subprocess.run = orig
     assert a.download_url == "http://x/a.bin" and a.asset_id == "5"
+
+
+class _StubClient(ReleaseClient):
+    platform = "github"
+    def __init__(self, releases=None, by_tag=None):
+        self._releases = releases or []
+        self._by_tag = by_tag or {}
+        self.uploaded = []
+    def list_releases(self, o, r, t):
+        return list(self._releases)
+    def get_release_by_tag(self, o, r, tag, t):
+        return self._by_tag.get(tag)
+    def create_release(self, o, r, t, info):
+        info.release_id = "NEW"
+        return info
+    def update_release(self, o, r, t, info):
+        return info
+    def download_asset(self, asset, t, dest):
+        return dest
+    def upload_asset(self, o, r, t, rid, path, name):
+        self.uploaded.append(name)
+        return AssetInfo(name=name, size=1, download_url="x")
+
+
+def _entry(src_platform="github", tgt_platform="github", src_auth="pat", tgt_auth="pat"):
+    src = Endpoint(platform=src_platform, owner="o", repo="r", branch="main", auth=src_auth)
+    tgt = Endpoint(platform=tgt_platform, owner="o2", repo="r", branch="main", auth=tgt_auth)
+    return TopologyEntry(name="x", source=src, targets=[tgt])
+
+
+def test_sync_releases_create_new_and_upload_asset(monkeypatch):
+    src_client = _StubClient(releases=[ReleaseInfo(tag_name="v1", name="v1",
+                        assets=[AssetInfo("a.bin", size=10, download_url="u")])])
+    tgt_client = _StubClient()  # 目标无既有 release
+    def _pick(platform, role="tgt"):
+        return src_client if role == "src" else tgt_client
+    monkeypatch.setattr("src.release_sync._client_for", _pick)
+    settings = SyncSettings(sync_releases=True)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert res.releases_created == 1
+    assert res.assets_uploaded == 1
+
+
+def test_sync_releases_update_existing_skips_asset(monkeypatch):
+    rel = ReleaseInfo(tag_name="v1", name="v1", assets=[AssetInfo("a.bin", size=10, download_url="u")])
+    src_client = _StubClient(releases=[rel])
+    tgt_client = _StubClient(by_tag={"v1": ReleaseInfo(tag_name="v1", release_id="EXIST",
+                                    assets=[AssetInfo("a.bin", size=10, download_url="u")])})
+    def _pick(platform, role="tgt"):
+        return src_client if role == "src" else tgt_client
+    monkeypatch.setattr("src.release_sync._client_for", _pick)
+    settings = SyncSettings(sync_releases=True)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert res.releases_updated == 1
+    assert res.assets_uploaded == 0  # 同名资产已存在，跳过上传
+
+
+def test_sync_releases_asset_size_cap_skip(monkeypatch):
+    src_client = _StubClient(releases=[ReleaseInfo(tag_name="v1",
+                        assets=[AssetInfo("big.bin", size=999 * 1024 * 1024, download_url="u")])])
+    tgt_client = _StubClient()
+    def _pick(platform, role="tgt"):
+        return src_client if role == "src" else tgt_client
+    monkeypatch.setattr("src.release_sync._client_for", _pick)
+    settings = SyncSettings(sync_releases=True, release_asset_max_size_mb=50)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert res.releases_created == 1
+    assert res.assets_skipped == 1
+    assert res.assets_uploaded == 0
+
+
+def test_sync_releases_disabled_by_default(monkeypatch):
+    src_client = _StubClient(releases=[ReleaseInfo(tag_name="v1")])
+    monkeypatch.setattr("src.release_sync._client_for", lambda p, role="tgt": src_client)
+    settings = SyncSettings(sync_releases=False)  # 默认关
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert res.releases_created == 0 and res.releases_updated == 0
+
+
+def test_sync_releases_source_list_error_recorded(monkeypatch):
+    class _Bad(ReleaseClient):
+        platform = "github"
+        def list_releases(self, o, r, t):
+            raise ReleaseSyncError("boom")
+        def get_release_by_tag(self, o, r, tag, t): return None
+        def create_release(self, o, r, t, info): return info
+        def update_release(self, o, r, t, info): return info
+        def download_asset(self, asset, t, dest): return dest
+        def upload_asset(self, o, r, t, rid, path, name): return AssetInfo(name=name, size=1, download_url="x")
+    monkeypatch.setattr("src.release_sync._client_for", lambda p, role="tgt": _Bad())
+    settings = SyncSettings(sync_releases=True)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert res.errors and "list failed" in res.errors[0]
+
+
+def test_sync_releases_target_unsupported_warns(monkeypatch):
+    src_client = _StubClient(releases=[ReleaseInfo(tag_name="v1")])
+    monkeypatch.setattr("src.release_sync._client_for", lambda p, role="tgt": src_client)
+    monkeypatch.setattr("src.release_sync.supports_releases", lambda p: False)  # 模拟目标不支持
+    settings = SyncSettings(sync_releases=True)
+    res = sync_releases(_entry(), {"github": Credential(pat="tok")}, settings)
+    assert any("does not support releases" in w for w in res.warnings)
