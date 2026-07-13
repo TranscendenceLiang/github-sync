@@ -3,8 +3,10 @@ from pathlib import Path
 
 from src.release_sync import (
     AssetInfo,
+    CNBReleaseClient,
     GiteeReleaseClient,
     GitHubReleaseClient,
+    GitCodeReleaseClient,
     ReleaseFilter,
     ReleaseInfo,
     ReleaseSyncError,
@@ -430,3 +432,59 @@ def test_gitee_upload_asset():
         subprocess.run = orig
     assert a.name == "a.bin" and a.size == 10
     assert a.download_url == "http://x/a.bin" and a.asset_id == "3"
+
+
+def test_cnb_list_returns_empty_on_message():
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = '{"message":"Not Found"}'; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = CNBReleaseClient()
+        rels = c.list_releases("o", "r", "tok")
+    finally:
+        subprocess.run = orig
+    assert rels == []
+
+def test_cnb_list_transport_error_raises():
+    import pytest
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 1; stdout = ""; stderr = "boom"
+        return P()
+    subprocess.run = _run
+    try:
+        c = CNBReleaseClient()
+        with pytest.raises(ReleaseSyncError):
+            c.list_releases("o", "r", "tok")
+    finally:
+        subprocess.run = orig
+
+def test_cnb_list_parses_releases():
+    sample = '{"data":[{"tag_name":"v1","name":"v1","id":1,"created_at":"2024-01-01","assets":[{"name":"a.bin","size":3,"browser_download_url":"u","id":9}]}]}'
+    orig = subprocess.run
+    def _run(args, **kwargs):
+        class P:
+            returncode = 0; stdout = sample; stderr = ""
+        return P()
+    subprocess.run = _run
+    try:
+        c = CNBReleaseClient()
+        rels = c.list_releases("o", "r", "tok")
+    finally:
+        subprocess.run = orig
+    assert len(rels) == 1 and rels[0].release_id == "1" and rels[0].assets[0].size == 3
+
+def test_gitcode_client_registered():
+    assert supports_releases("gitcode") is True
+
+def test_gitcode_inherits_gitee_base():
+    c = GitCodeReleaseClient()
+    assert c._base("o", "r") == "https://api.gitcode.com/api/v5/repos/o/r"
+    # 继承 Gitee 的 6 个方法
+    for m in ("list_releases", "get_release_by_tag", "create_release",
+              "update_release", "download_asset", "upload_asset"):
+        assert callable(getattr(c, m, None))

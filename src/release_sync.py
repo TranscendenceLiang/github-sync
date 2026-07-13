@@ -284,3 +284,81 @@ class GiteeReleaseClient(ReleaseClient):
 
 
 RELEASE_CLIENTS["gitee"] = GiteeReleaseClient
+
+
+class CNBReleaseClient(ReleaseClient):
+    platform = "cnb"
+
+    def _base(self, owner, repo):
+        return f"https://api.cnb.cool/{owner}/{repo}"
+
+    def list_releases(self, owner, repo, token):
+        url = f"{self._base(owner, repo)}/releases"
+        rc, out = _curl_json(["curl", "-s", "-X", "GET", url,
+                              "-H", f"Authorization: Bearer {token}"])
+        if rc != 0:
+            raise ReleaseSyncError(f"cnb list_releases failed (rc={rc})")
+        it = _json_obj(out)
+        if "message" in it:
+            return []  # 平台不支持 release API -> 优雅降级为空
+        items = it.get("data", it if isinstance(it, list) else [])
+        return [_release_from_json(r) for r in items]
+
+    def get_release_by_tag(self, owner, repo, tag, token):
+        for r in self.list_releases(owner, repo, token):
+            if r.tag_name == tag:
+                return r
+        return None
+
+    def create_release(self, owner, repo, token, info):
+        import json
+        url = f"{self._base(owner, repo)}/releases"
+        body = json.dumps({"tag_name": info.tag_name, "name": info.name,
+                           "body": info.body, "draft": info.draft, "prerelease": info.prerelease})
+        rc, out = _curl_json(["curl", "-s", "-X", "POST", url,
+                              "-H", f"Authorization: Bearer {token}",
+                              "-H", "Content-Type: application/json", "--data", body])
+        if rc != 0:
+            raise ReleaseSyncError(f"cnb create_release {info.tag_name} failed: {out}")
+        info.release_id = str(_json_obj(out).get("id"))
+        return info
+
+    def update_release(self, owner, repo, token, info):
+        import json
+        url = f"{self._base(owner, repo)}/releases/{info.release_id}"
+        body = json.dumps({"name": info.name, "body": info.body,
+                           "draft": info.draft, "prerelease": info.prerelease})
+        rc, out = _curl_json(["curl", "-s", "-X", "PATCH", url,
+                              "-H", f"Authorization: Bearer {token}",
+                              "-H", "Content-Type: application/json", "--data", body])
+        if rc != 0:
+            raise ReleaseSyncError(f"cnb update_release {info.tag_name} failed: {out}")
+        return info
+
+    def download_asset(self, asset, token, dest):
+        rc, out = _curl_json(["curl", "-s", "-L", "-H", f"Authorization: Bearer {token}",
+                             "-o", str(dest), asset.download_url])
+        if rc != 0:
+            raise ReleaseSyncError(f"cnb download_asset {asset.name} failed: {out}")
+        return dest
+
+    def upload_asset(self, owner, repo, token, release_id, path, name):
+        url = f"{self._base(owner, repo)}/releases/{release_id}/assets"
+        rc, out = _curl_json(["curl", "-s", "-X", "POST", url,
+                              "-H", f"Authorization: Bearer {token}",
+                              "-F", f"file=@{path}"])
+        if rc != 0:
+            raise ReleaseSyncError(f"cnb upload_asset {name} failed: {out}")
+        return _asset_from_json(_json_obj(out))
+
+
+class GitCodeReleaseClient(GiteeReleaseClient):
+    """GitCode 的 release API 与 Gitee v5 近似；复用 Gitee 实现并确保端点前缀正确。"""
+    platform = "gitcode"
+
+    def _base(self, owner, repo):
+        return f"https://api.gitcode.com/api/v5/repos/{owner}/{repo}"
+
+
+RELEASE_CLIENTS["cnb"] = CNBReleaseClient
+RELEASE_CLIENTS["gitcode"] = GitCodeReleaseClient
