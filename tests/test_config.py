@@ -12,6 +12,7 @@ from src.config import (
     load_config,
     ConfigError,
 )
+from src.release_sync import ReleaseFilter
 
 
 def test_load_minimal_config(tmp_path):
@@ -349,9 +350,6 @@ def test_load_config_invalid_visibility_raises(tmp_path):
         load_config(cfg_file)
 
 
-from src.config import load_config, ConfigError
-from src.release_sync import ReleaseFilter
-
 def test_settings_release_defaults():
     from src.config import _parse_settings
     s = _parse_settings({})
@@ -373,7 +371,6 @@ def test_parse_settings_release_on():
     assert s.release_filter.pattern == "v*"
 
 def test_parse_settings_release_filter_invalid_mode():
-    import pytest
     from src.config import _parse_settings
     with pytest.raises(ConfigError, match="release_filter.mode"):
         _parse_settings({"release_filter": {"mode": "bogus"}})
@@ -400,3 +397,9 @@ def test_parse_entry_release_inherits_none():
     })
     assert e.sync_releases is None
     assert e.release_filter is None
+
+
+def test_parse_release_filter_tags_non_str_rejected():
+    from src.config import _parse_release_filter
+    with pytest.raises(ConfigError, match="list of strings"):
+        _parse_release_filter({"mode": "tags", "tags": ["v1.0.0", 123]})

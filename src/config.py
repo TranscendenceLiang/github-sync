@@ -168,10 +168,15 @@ def _parse_release_filter(data: Any) -> ReleaseFilter:
         raise ConfigError(
             f"release_filter.mode must be one of all|latest|pattern|tags, got {mode!r}"
         )
-    latest_count = int(data.get("latest_count", 1))
+    try:
+        latest_count = int(data.get("latest_count", 1))
+    except (TypeError, ValueError) as e:
+        raise ConfigError(
+            f"release_filter.latest_count must be an integer, got {data.get('latest_count')!r}"
+        ) from e
     pattern = data.get("pattern")
     tags = data.get("tags")
-    if tags is not None and not isinstance(tags, list):
+    if tags is not None and (not isinstance(tags, list) or not all(isinstance(t, str) for t in tags)):
         raise ConfigError("release_filter.tags must be a list of strings")
     include_drafts = bool(data.get("include_drafts", False))
     return ReleaseFilter(
@@ -197,6 +202,12 @@ def _parse_settings(data: Any) -> SyncSettings:
         if not isinstance(pf_raw, list) or not all(isinstance(f, str) for f in pf_raw):
             raise ConfigError("settings.preserve_files must be a list of strings")
         preserve_files = [str(f) for f in pf_raw]
+    try:
+        release_asset_max_size_mb = int(data.get("release_asset_max_size_mb", 50))
+    except (TypeError, ValueError) as e:
+        raise ConfigError(
+            f"release_asset_max_size_mb must be an integer, got {data.get('release_asset_max_size_mb')!r}"
+        ) from e
     return SyncSettings(
         auto_create=bool(data.get("auto_create", False)),
         force_push=bool(data.get("force_push", False)),
@@ -204,7 +215,7 @@ def _parse_settings(data: Any) -> SyncSettings:
         mode=mode,
         preserve_files=preserve_files,
         sync_releases=bool(data.get("sync_releases", False)),
-        release_asset_max_size_mb=int(data.get("release_asset_max_size_mb", 50)),
+        release_asset_max_size_mb=release_asset_max_size_mb,
         release_filter=_parse_release_filter(data.get("release_filter")),
     )
 
