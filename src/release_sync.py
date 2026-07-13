@@ -54,7 +54,7 @@ class ReleaseSyncError(Exception):
 class ReleaseClient(ABC):
     """Abstract base for per-platform release API clients (registered in later Tasks)."""
 
-    platform: str
+    platform: str = ""
 
     @abstractmethod
     def list_releases(self) -> list[ReleaseInfo]:
@@ -70,8 +70,8 @@ def filter_releases(releases: list[ReleaseInfo], rf: ReleaseFilter) -> list[Rele
     if rf.mode == "all":
         return out
     if rf.mode == "latest":
-        ordered = sorted(out, key=lambda r: r.published_at or "", reverse=True)
-        return ordered[: max(1, rf.latest_count)]
+        ordered = sorted(out, key=lambda r: r.published_at or "", reverse=True)  # None -> "" treated as oldest
+        return ordered[: max(1, rf.latest_count)]  # at least 1
     if rf.mode == "pattern":
         if not rf.pattern:
             return out
@@ -81,7 +81,7 @@ def filter_releases(releases: list[ReleaseInfo], rf: ReleaseFilter) -> list[Rele
             return out
         wanted = set(rf.tags)
         return [r for r in out if r.tag_name in wanted]
-    return out
+    raise ValueError(f"unknown filter mode: {rf.mode!r}")
 
 
 RELEASE_CLIENTS: dict[str, type[ReleaseClient]] = {}

@@ -103,3 +103,21 @@ def test_filter_tags():
 def test_supports_releases_registry():
     """Unknown platform must not be claimed as supported."""
     assert supports_releases("gitlab") is False
+
+
+def test_filter_unknown_mode_raises():
+    import pytest
+    with pytest.raises(ValueError, match="unknown filter mode"):
+        filter_releases([_rel("v1")], ReleaseFilter(mode="bogus"))
+
+
+def test_filter_pattern_none_returns_all():
+    rels = [_rel("v1.0.0"), _rel("rel-x")]
+    rf = ReleaseFilter(mode="pattern", pattern=None)
+    assert len(filter_releases(rels, rf)) == 2
+
+
+def test_filter_tags_none_returns_all():
+    rels = [_rel("v1.0.0"), _rel("v2.0.0")]
+    rf = ReleaseFilter(mode="tags", tags=None)
+    assert len(filter_releases(rels, rf)) == 2
