@@ -54,6 +54,14 @@ sync:
     mode: mirror                  # mirror | rebase
     preserve_files:               # rebase 模式保留的目标特有文件
       - .cnb.yml
+    sync_releases: false          # 全局总开关：同步源平台 Release 到各目标（默认关）
+    release_asset_max_size_mb: 50 # 单附件大小上限（MB），超限跳过 + 告警
+    release_filter:               # 全局默认筛选（见「Release 同步」一节）
+      mode: all                   # all | latest | pattern | tags
+      latest_count: 1             # mode=latest 时取最近 N 个
+      pattern: "v*.*.*"          # mode=pattern：fnmatch glob 匹配 tag_name
+      tags: [v1.0.0, v2.0.0]      # mode=tags：显式 tag 白名单
+      include_drafts: false       # 是否同步草稿 Release
 
   topology:
     - name: "github-to-cnb"
@@ -61,6 +69,10 @@ sync:
       preserve_files:             # 覆盖全局列表（可选）
         - .cnb.yml
         - Dockerfile
+      sync_releases: false        # 条目级覆盖全局总开关（可关）
+      release_filter:             # 条目级覆盖全局筛选（可选）
+        mode: pattern
+        pattern: "v*"
       source:
         platform: github                # github | gitee | cnb | gitcode
         owner: myorg
@@ -133,7 +145,7 @@ Configure `SYNC_DISPATCH_TOKEN` in the source repo (same PAT as in the center).
   synced branch. The branch you are syncing is never deleted. **DANGEROUS** — opt
   in only when you want to discard stale target branches. Defaults to `false`.
 - **Auto-create (`auto_create`)**: when `true` and the target repository does not exist, the system creates it automatically before syncing. See [Auto-Create](#auto-create) below.
-- **No Releases sync**: only branches and tags.
+- **Releases sync (`sync_releases`)**: when `true`, source-platform releases (metadata + attachment assets) are synced to each target after branch sync. Off by default — see [Release 同步](#release-同步) below.
 
 ### Rebase 模式
 
@@ -165,6 +177,55 @@ Configure `SYNC_DISPATCH_TOKEN` in the source repo (same PAT as in the center).
   (one key per host). If you configure SSH for both GitHub and Gitee, only
   the first key is written. Workaround: use PAT for one of them.
 - **Auto-create**: set `auto_create: true` on a target to have it created automatically. See [Auto-Create](#auto-create) for details.
+
+## Release 同步
+
+设置 `settings.sync_releases: true` 后，分支同步完成后再把源平台的 **Release**（发布元数据 + 附件资产）同步到每个目标平台。默认关（`false`），开启前与现有行为完全一致、零影响。
+
+- **触发时机**：在分支同步之后、按 topology 条目逐条执行。
+- **四平台支持与优雅降级**：GitHub / Gitee 完整实现（列表 / 创建 / 更新 / 资产上传）。CNB / GitCode 为尽力而为（best-effort）——若该平台 release API 不可用，则告警并跳过该目标，不计入失败。
+- **筛选 `release_filter`**（四种 `mode`）：
+  - `all`：全量同步；
+  - `latest`：按发布时间倒序取最近 `latest_count` 个；
+  - `pattern`：用 `fnmatch` glob 匹配 `tag_name`；
+  - `tags`：仅同步 `tags` 白名单内的 tag。
+  - `include_drafts`：草稿 Release 默认**排除**（全局、在 mode 过滤之前先剔除）；设为 `true` 才同步。
+  - 被过滤掉的 Release 不会触发任何资产下载，节省带宽。
+- **资产同步**：单附件超过 `release_asset_max_size_mb`（默认 50MB）则跳过并告警；单个资产下载 / 上传失败仅记告警并继续其他资产与其他目标（失败隔离）。目标已有同名资产则跳过重传。
+- **幂等**：按 `tag_name` 唯一标识，目标已有同 tag 的 Release 则 `update_release` 刷新，否则 `create_release`。
+
+条目级可用 `sync_releases` / `release_filter` 覆盖全局设置（不设则继承）。
+
+```yaml
+sync:
+  settings:
+    sync_releases: true              # 全局总开关（默认 false）
+    release_asset_max_size_mb: 50    # 单附件大小上限（MB）
+    release_filter:                  # 全局默认筛选
+      mode: all                      # all | latest | pattern | tags
+      latest_count: 1                # mode=latest 时取最近 N 个
+      pattern: "v*.*.*"             # mode=pattern：fnmatch glob 匹配 tag_name
+      tags: [v1.0.0, v2.0.0]        # mode=tags：显式 tag 白名单
+      include_drafts: false          # 是否同步草稿 release
+
+  topology:
+    - name: "github-to-cnb"
+      sync_releases: false           # 条目级覆盖全局（可关）
+      release_filter:                # 条目级覆盖全局筛选（可选）
+        mode: pattern
+        pattern: "v*"
+      source:
+        platform: github
+        owner: myorg
+        repo: myproject
+        branch: main
+      targets:
+        - platform: cnb
+          owner: myorg
+          repo: myproject
+          branch: main
+```
+
 
 ## Development
 
