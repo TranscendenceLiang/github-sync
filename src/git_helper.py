@@ -154,7 +154,7 @@ def list_remote_branches_url(url: str) -> list[str]:
     return branches
 
 
-def resolve_branches(netloc_patterns: list[str], url: str) -> list[str]:
+def resolve_branches(patterns: list[str], url: str) -> list[str]:
     """Match remote branches against glob patterns.
 
     Returns sorted, deduplicated branch names. Raises ConfigError if no
@@ -162,13 +162,13 @@ def resolve_branches(netloc_patterns: list[str], url: str) -> list[str]:
     """
     all_remote = list_remote_branches_url(url)
     matched: set[str] = set()
-    for pattern in netloc_patterns:
+    for pattern in patterns:
         for branch in all_remote:
             if fnmatch.fnmatch(branch, pattern):
                 matched.add(branch)
     if not matched:
         raise ConfigError(
-            f"no remote branches matched patterns {netloc_patterns} "
+            f"no remote branches matched patterns {patterns} "
             f"(remote has {len(all_remote)} branch(es))"
         )
     return sorted(matched)
