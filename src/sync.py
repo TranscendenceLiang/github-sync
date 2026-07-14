@@ -7,6 +7,7 @@ For each topology entry:
 """
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -208,6 +209,20 @@ def sync_topology_entry(
             )
         target_infos.append((target, t_url, tgt_cred_value))
 
+    # Compute per-target branch lists
+    target_branch_list: list[list[str]] = []
+    for tgt, tgt_url, _ in target_infos:
+        if tgt.branches:
+            # Match target patterns against source's resolved branches
+            tgt_list = [b for b in resolved_branches
+                        if any(fnmatch.fnmatch(b, p) for p in tgt.branches)]
+            target_branch_list.append(tgt_list)
+        elif tgt.branch:
+            target_branch_list.append([tgt.branch])
+        else:
+            # Inherit source's resolved branches
+            target_branch_list.append(resolved_branches)
+
     for branch in resolved_branches:
         # Get source SHA for this branch
         source_sha = get_head_sha(source_clone_dir, branch)
@@ -226,13 +241,17 @@ def sync_topology_entry(
         if entry.source.branches:
             subprocess.run(
                 ["git", "checkout", branch],
-                cwd=source_clone_dir, capture_output=True,
+                cwd=source_clone_dir, capture_output=True, check=True,
             )
 
-        branch_ok = True
-        for tgt, target_url, tgt_cred_value in target_infos:
-            # Target branch: use target.branch if set, else the source branch name
-            target_branch = tgt.branch if tgt.branch else branch
+        synced_targets = 0
+        for tgt_idx, (tgt, target_url, tgt_cred_value) in enumerate(target_infos):
+            # Check if this branch is in the target's allowed list
+            tgt_branches_for_this_target = target_branch_list[tgt_idx]
+            if branch not in tgt_branches_for_this_target:
+                continue  # skip branches not in target's branch list
+
+            target_branch = branch  # always use source branch name (same-name mapping)
 
             # Delegate to strategy
             try:
@@ -254,7 +273,6 @@ def sync_topology_entry(
                         )
                     except SyncError as retry_err:
                         if entry.source.branches:
-                            branch_ok = False
                             branches_failed.append((branch, str(retry_err)))
                             continue
                         else:
@@ -262,12 +280,14 @@ def sync_topology_entry(
                 elif entry.source.branches:
                     # Multi-branch mode: record failure and continue with
                     # remaining branches.
-                    branch_ok = False
                     branches_failed.append((branch, str(e)))
                     continue
                 else:
                     # Single-branch mode: preserve legacy raise behaviour.
                     raise
+
+            # success path
+            synced_targets += 1
 
             # Format results with full target identifiers for callers.
             tgt_id = f"{tgt.platform}:{tgt.owner}/{tgt.repo}"
@@ -278,18 +298,17 @@ def sync_topology_entry(
                 skipped.append(tgt_id)
             restored.extend(result.restored)
 
-        if branch_ok:
+        if synced_targets > 0:
             branches_synced.append(branch)
 
     # ---- delete_remote cleanup (outer loop) ----
-    if delete_remote and target_infos:
-        for tgt, tgt_url, _ in target_infos:
+    if delete_remote:
+        for tgt_idx, (tgt, tgt_url, _) in enumerate(target_infos):
             try:
                 all_target_branches = list_remote_branches_url(tgt_url)
             except Exception:
                 continue
-            resolved_set = set(resolved_branches)
-            stale = [b for b in all_target_branches if b not in resolved_set]
+            stale = [b for b in all_target_branches if b not in set(target_branch_list[tgt_idx])]
             if stale:
                 subprocess.run(
                     ["git", "remote", "remove", "del_rm"],
@@ -316,7 +335,7 @@ def sync_topology_entry(
     # Determine success: at least one branch synced, or source branch list was empty
     source_label = f"{entry.source.platform}:{entry.source.owner}/{entry.source.repo}"
     if entry.source.branches:
-        source_label += f"#({','.join(entry.source.branches)})"
+        source_label += f"#({','.join(resolved_branches)})"
     else:
         source_label += f"#{entry.source.branch}"
 
