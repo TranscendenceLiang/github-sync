@@ -74,6 +74,11 @@ def run_sync(
                 f"[OK] {entry.name}: {result.source} -> "
                 f"{', '.join(result.targets_pushed) or '(no targets)'}"
             )
+            if result.branches_synced:
+                branch_summary = ", ".join(result.branches_synced)
+                print(f"[INFO] {entry.name}: branches synced: {branch_summary}")
+            for branch, err in result.branches_failed:
+                print(f"[WARN] {entry.name}: branch {branch!r}: {err}", file=sys.stderr)
             rr = result.release_result
             if rr is not None:
                 print(
