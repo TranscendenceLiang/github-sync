@@ -5,6 +5,7 @@ intentionally thin: SyncEngine composes these primitives.
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.credential import Credential
+
+from src.config import ConfigError
 
 
 class GitError(Exception):
@@ -45,20 +48,35 @@ def prepare_ssh_key(cred: "Credential", ssh_dir: Path) -> Path:
     return key_file
 
 
-def clone_or_fetch(url: str, dest: Path, branch: str) -> Path:
+def clone_or_fetch(
+    url: str,
+    dest: Path,
+    branch: str | None = None,
+    single_branch: bool = True,
+) -> Path:
     """Clone the URL into dest, or fetch+checkout if dest already exists.
+
+    When ``single_branch`` is True (default) and a ``branch`` is given,
+    only that branch is fetched.  Set ``single_branch=False`` to fetch all
+    branches (full clone).
 
     Always returns dest.
     """
     dest = Path(dest)
     if (dest / ".git").is_dir():
-        # Fetch and reset to remote branch
-        _run(["git", "fetch", "origin", branch], cwd=dest)
-        _run(["git", "checkout", branch], cwd=dest)
-        _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
+        if branch:
+            _run(["git", "fetch", "origin", branch], cwd=dest)
+            _run(["git", "checkout", branch], cwd=dest)
+            _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
+        else:
+            _run(["git", "fetch", "--all"], cwd=dest)
     else:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", "--branch", branch, "--single-branch", url, str(dest)])
+        args = ["git", "clone"]
+        if single_branch and branch:
+            args += ["--branch", branch, "--single-branch"]
+        args += [url, str(dest)]
+        _run(args)
     return dest
 
 
@@ -134,6 +152,26 @@ def list_remote_branches_url(url: str) -> list[str]:
         if ref.startswith("refs/heads/"):
             branches.append(ref[len("refs/heads/"):])
     return branches
+
+
+def resolve_branches(netloc_patterns: list[str], url: str) -> list[str]:
+    """Match remote branches against glob patterns.
+
+    Returns sorted, deduplicated branch names. Raises ConfigError if no
+    remote branches match any pattern.
+    """
+    all_remote = list_remote_branches_url(url)
+    matched: set[str] = set()
+    for pattern in netloc_patterns:
+        for branch in all_remote:
+            if fnmatch.fnmatch(branch, pattern):
+                matched.add(branch)
+    if not matched:
+        raise ConfigError(
+            f"no remote branches matched patterns {netloc_patterns} "
+            f"(remote has {len(all_remote)} branch(es))"
+        )
+    return sorted(matched)
 
 
 def delete_remote_branch(repo: Path, remote: str, branch: str) -> None:

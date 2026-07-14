@@ -5,12 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from src.config import ConfigError
 from src.git_helper import (
     GitError,
     clone_or_fetch,
     get_head_sha,
     push_branch,
     prepare_ssh_key,
+    resolve_branches,
 )
 
 
@@ -86,6 +88,68 @@ def test_push_branch_to_bare(tmp_path, make_local_repo):
     )
     assert out.returncode == 0
     assert len(out.stdout.strip()) == 40
+
+
+def _make_multi_branch_repo(make_local_repo):
+    """Helper: repo with main, develop, release/v1 branches. Returns bare path."""
+    src = make_local_repo(commits=1, branch="main")
+    work = Path(src["work"])
+    bare = Path(src["bare"])
+    env = os.environ.copy()
+    env.update({"GIT_AUTHOR_NAME":"T","GIT_AUTHOR_EMAIL":"t@t","GIT_COMMITTER_NAME":"T","GIT_COMMITTER_EMAIL":"t@t"})
+    for b in ["develop", "release/v1"]:
+        subprocess.run(["git", "checkout", "-b", b], cwd=work, check=True, env=env)
+        (work / f"{b.replace('/', '_')}.txt").write_text(b)
+        subprocess.run(["git", "add", "."], cwd=work, check=True, env=env)
+        subprocess.run(["git", "commit", "-m", b], cwd=work, check=True, env=env)
+        subprocess.run(["git", "push", "-u", "origin", b], cwd=work, check=True, env=env)
+    # git init --bare may default HEAD to master; ensure remote HEAD points to
+    # main so that a full clone (no --branch) checks out a local main.
+    subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], cwd=bare, check=True, capture_output=True)
+    return src["bare"]
+
+
+def test_resolve_branches_wildcard_matches_all(make_local_repo):
+    src = _make_multi_branch_repo(make_local_repo)
+    result = resolve_branches(["*"], src)
+    assert "main" in result
+    assert "develop" in result
+    assert "release/v1" in result
+
+
+def test_resolve_branches_subset_pattern(make_local_repo):
+    src = _make_multi_branch_repo(make_local_repo)
+    result = resolve_branches(["main", "release/*"], src)
+    assert "main" in result
+    assert "release/v1" in result
+    assert "develop" not in result
+
+
+def test_resolve_branches_total_zero_raises(make_local_repo):
+    src = make_local_repo(commits=1, branch="main")
+    with pytest.raises(ConfigError, match="no remote branches matched"):
+        resolve_branches(["nonexistent/*"], src["bare"])
+
+
+def test_clone_or_fetch_full_clone_all_branches_present(tmp_path, make_local_repo):
+    src = _make_multi_branch_repo(make_local_repo)
+    dest = tmp_path / "full_clone"
+    clone_or_fetch(src, dest, single_branch=False)
+    assert (dest / ".git").exists()
+    # Full clone checks out HEAD branch (main) locally; other branches are
+    # available as remote-tracking refs.
+    assert subprocess.run(["git", "rev-parse", "main"], cwd=dest, capture_output=True).returncode == 0
+    assert subprocess.run(["git", "rev-parse", "origin/develop"], cwd=dest, capture_output=True).returncode == 0
+    assert subprocess.run(["git", "rev-parse", "origin/release/v1"], cwd=dest, capture_output=True).returncode == 0
+
+
+def test_clone_or_fetch_single_branch_still_works(tmp_path, make_local_repo):
+    src = _make_multi_branch_repo(make_local_repo)
+    dest = tmp_path / "single_clone"
+    clone_or_fetch(src, dest, branch="main", single_branch=True)
+    assert (dest / ".git").exists()
+    assert subprocess.run(["git", "rev-parse", "main"], cwd=dest, capture_output=True).returncode == 0
+    assert subprocess.run(["git", "rev-parse", "develop"], cwd=dest, capture_output=True).returncode != 0
 
 
 def test_prepare_ssh_key_writes_file(tmp_path):
