@@ -56,7 +56,8 @@ class Endpoint:
     platform: str
     owner: str
     repo: str
-    branch: str
+    branch: str | None = None
+    branches: list[str] | None = None
     auth: str = "ssh"
     auto_create: bool = False
     visibility: str = "private"
@@ -67,6 +68,13 @@ class Endpoint:
                 f"unsupported platform {self.platform!r}; "
                 f"must be one of {sorted(SUPPORTED_PLATFORMS)}"
             )
+        if self.branch is not None and self.branches is not None:
+            raise ConfigError(
+                f"'branch' and 'branches' are mutually exclusive "
+                f"(got branch={self.branch!r}, branches={self.branches!r})"
+            )
+        if self.branches is not None and len(self.branches) == 0:
+            raise ConfigError("'branches' must not be empty")
         if self.auth not in ("ssh", "pat"):
             raise ConfigError(f"auth must be 'ssh' or 'pat', got {self.auth!r}")
         if self.visibility not in ("public", "private"):
@@ -99,16 +107,26 @@ class SyncConfig:
 def _parse_endpoint(data: Any, ctx: str) -> Endpoint:
     if not isinstance(data, dict):
         raise ConfigError(f"{ctx}: expected mapping, got {type(data).__name__}")
-    required = ("platform", "owner", "repo", "branch")
+    required = ("platform", "owner", "repo")
     missing = [k for k in required if k not in data]
     if missing:
         raise ConfigError(f"{ctx}: missing required field(s): {', '.join(missing)}")
+    branch = data.get("branch")
+    branches = data.get("branches")
+    if branch is not None and branches is not None:
+        raise ConfigError(f"{ctx}: 'branch' and 'branches' are mutually exclusive")
+    if branches is not None:
+        if not isinstance(branches, list) or not all(isinstance(b, str) for b in branches):
+            raise ConfigError(f"{ctx}: 'branches' must be a list of strings")
+        if len(branches) == 0:
+            raise ConfigError(f"{ctx}: 'branches' must not be empty")
     try:
         return Endpoint(
             platform=str(data["platform"]).lower(),
             owner=str(data["owner"]),
             repo=str(data["repo"]),
-            branch=str(data["branch"]),
+            branch=str(branch) if branch is not None else None,
+            branches=[str(b) for b in branches] if branches is not None else None,
             auth=str(data.get("auth", "ssh")).lower(),
             auto_create=bool(data.get("auto_create", False)),
             visibility=str(data.get("visibility", "private")).lower(),

@@ -403,3 +403,106 @@ def test_parse_release_filter_tags_non_str_rejected():
     from src.config import _parse_release_filter
     with pytest.raises(ConfigError, match="list of strings"):
         _parse_release_filter({"mode": "tags", "tags": ["v1.0.0", 123]})
+
+
+# -- branches field tests --
+
+
+def test_endpoint_branches_field():
+    e = Endpoint(platform="github", owner="o", repo="r", branches=["*"])
+    assert e.branches == ["*"]
+    assert e.branch is None
+
+
+def test_endpoint_branch_and_branches_mutually_exclusive():
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        Endpoint(platform="github", owner="o", repo="r", branch="main", branches=["*"])
+
+
+def test_parse_branches_in_yaml(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "all-branches"
+              source:
+                platform: github
+                owner: myorg
+                repo: myproject
+                branches: ["*"]
+              targets:
+                - platform: gitee
+                  owner: myorg
+                  repo: myproject
+    """))
+    cfg = load_config(cfg_file)
+    entry = cfg.topology[0]
+    assert entry.source.branches == ["*"]
+    assert entry.source.branch is None
+    assert entry.targets[0].branch is None
+    assert entry.targets[0].branches is None
+
+
+def test_parse_branches_subset(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "subset"
+              source:
+                platform: github
+                owner: myorg
+                repo: myproject
+                branches: ["main", "release/*"]
+              targets:
+                - platform: cnb
+                  owner: myorg
+                  repo: myproject
+                  branches: ["main"]
+    """))
+    cfg = load_config(cfg_file)
+    assert cfg.topology[0].source.branches == ["main", "release/*"]
+    assert cfg.topology[0].targets[0].branches == ["main"]
+
+
+def test_parse_branches_empty_list_rejected(tmp_path):
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "x"
+              source:
+                platform: github
+                owner: o
+                repo: r
+                branches: []
+              targets:
+                - platform: gitee
+                  owner: o
+                  repo: r
+    """))
+    with pytest.raises(ConfigError, match="branches"):
+        load_config(cfg_file)
+
+
+def test_endpoint_no_branch_nor_branches_still_ok():
+    """Endpoint can be constructed without branch/branches (target inheritance)."""
+    e = Endpoint(platform="github", owner="o", repo="r")
+    assert e.branch is None
+    assert e.branches is None
+
+
+def test_legacy_branch_only_config_still_works(tmp_path):
+    """Existing branch: main configs parse identically."""
+    cfg_file = tmp_path / "sync.yaml"
+    cfg_file.write_text(textwrap.dedent("""\
+        sync:
+          topology:
+            - name: "legacy"
+              source: {platform: github, owner: o, repo: r, branch: main}
+              targets: [{platform: gitee, owner: o, repo: r, branch: main}]
+    """))
+    cfg = load_config(cfg_file)
+    assert cfg.topology[0].source.branch == "main"
+    assert cfg.topology[0].source.branches is None
+    assert cfg.topology[0].targets[0].branch == "main"
