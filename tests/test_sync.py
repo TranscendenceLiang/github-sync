@@ -253,3 +253,103 @@ def test_sync_topology_entry_auto_create_disabled_still_fails(tmp_path, make_loc
             force_push=True,
             url_overrides={"github": str(src_bare), "cnb": str(dst_bare)},
         )
+
+
+def test_sync_topology_entry_multi_branch(tmp_path, make_local_repo):
+    src_base = make_local_repo(commits=1, branch="main")
+    src_bare = Path(src_base["bare"])
+    src_work = Path(src_base["work"])
+    env = os.environ.copy()
+    env.update({"GIT_AUTHOR_NAME":"T","GIT_AUTHOR_EMAIL":"t@t","GIT_COMMITTER_NAME":"T","GIT_COMMITTER_EMAIL":"t@t"})
+    subprocess.run(["git", "checkout", "-b", "develop"], cwd=src_work, check=True, env=env)
+    (src_work / "dev.txt").write_text("dev")
+    subprocess.run(["git", "add", "."], cwd=src_work, check=True, env=env)
+    subprocess.run(["git", "commit", "-m", "dev"], cwd=src_work, check=True, env=env)
+    subprocess.run(["git", "push", "-u", "origin", "develop"], cwd=src_work, check=True, env=env)
+
+    dst_bare = tmp_path / "dest.git"
+    subprocess.run(["git", "init", "--bare", str(dst_bare)], check=True, capture_output=True)
+
+    creds = {"github": Credential(ssh_key="k", pat=None),
+             "gitee": Credential(ssh_key="k", pat=None)}
+    entry = TopologyEntry(
+        name="multi",
+        source=Endpoint(platform="github", owner="o", repo="r", branches=["*"]),
+        targets=[Endpoint(platform="gitee", owner="o", repo="r")],
+    )
+
+    result = sync_topology_entry(
+        entry=entry, creds=creds, work_dir=tmp_path / "work",
+        url_overrides={"github": str(src_bare), "gitee": str(dst_bare)},
+        bypass_credentials=True,
+    )
+
+    assert result.success is True
+    assert "main" in result.branches_synced
+    assert "develop" in result.branches_synced
+    assert subprocess.run(["git", "rev-parse", "main"], cwd=dst_bare, capture_output=True).returncode == 0
+    assert subprocess.run(["git", "rev-parse", "develop"], cwd=dst_bare, capture_output=True).returncode == 0
+
+
+def test_sync_topology_entry_multi_branch_partial_failure(tmp_path, make_local_repo):
+    src_base = make_local_repo(commits=1, branch="main")
+    src_bare = Path(src_base["bare"])
+    src_work = Path(src_base["work"])
+    env = os.environ.copy()
+    env.update({"GIT_AUTHOR_NAME":"T","GIT_AUTHOR_EMAIL":"t@t","GIT_COMMITTER_NAME":"T","GIT_COMMITTER_EMAIL":"t@t"})
+    subprocess.run(["git", "checkout", "-b", "develop"], cwd=src_work, check=True, env=env)
+    (src_work / "dev.txt").write_text("dev")
+    subprocess.run(["git", "add", "."], cwd=src_work, check=True, env=env)
+    subprocess.run(["git", "commit", "-m", "dev"], cwd=src_work, check=True, env=env)
+    subprocess.run(["git", "push", "-u", "origin", "develop"], cwd=src_work, check=True, env=env)
+
+    # Target has conflicting main
+    dst_bare = tmp_path / "dest.git"
+    subprocess.run(["git", "init", "--bare", str(dst_bare)], check=True, capture_output=True)
+    dst_work = tmp_path / "dst_work"
+    subprocess.run(["git", "clone", str(dst_bare), str(dst_work)], check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "main"], cwd=dst_work, check=True, env=env)
+    (dst_work / "conflict.txt").write_text("conflict")
+    subprocess.run(["git", "add", "."], cwd=dst_work, check=True, env=env)
+    subprocess.run(["git", "commit", "-m", "tgt"], cwd=dst_work, check=True, env=env)
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=dst_work, check=True, env=env)
+
+    creds = {"github": Credential(ssh_key="k", pat=None),
+             "gitee": Credential(ssh_key="k", pat=None)}
+    entry = TopologyEntry(
+        name="partial",
+        source=Endpoint(platform="github", owner="o", repo="r", branches=["*"]),
+        targets=[Endpoint(platform="gitee", owner="o", repo="r")],
+    )
+
+    result = sync_topology_entry(
+        entry=entry, creds=creds, work_dir=tmp_path / "work",
+        force_push=False,
+        url_overrides={"github": str(src_bare), "gitee": str(dst_bare)},
+        bypass_credentials=True,
+    )
+
+    assert "main" in [b for b, _ in result.branches_failed]
+    assert "develop" in result.branches_synced
+
+
+def test_sync_topology_entry_legacy_branch_unaffected(tmp_path, make_local_repo):
+    src = make_local_repo(commits=2, branch="main")
+    dst = make_local_repo(commits=0, branch="main")
+
+    creds = {"github": Credential(ssh_key="k", pat=None),
+             "gitee": Credential(ssh_key="k", pat=None)}
+    entry = TopologyEntry(
+        name="legacy",
+        source=Endpoint(platform="github", owner="o", repo="r", branch="main"),
+        targets=[Endpoint(platform="gitee", owner="o", repo="r", branch="main")],
+    )
+
+    result = sync_topology_entry(
+        entry=entry, creds=creds, work_dir=tmp_path / "work",
+        url_overrides={"github": str(src["bare"]), "gitee": str(dst["bare"])},
+    )
+
+    assert result.success is True
+    assert result.branches_synced == ["main"]
+    assert result.branches_failed == []

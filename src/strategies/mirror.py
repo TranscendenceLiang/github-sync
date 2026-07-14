@@ -9,9 +9,7 @@ from pathlib import Path
 from src.git_helper import (
     GitError,
     clone_or_fetch,
-    delete_remote_branch,
     get_head_sha,
-    list_remote_branches_url,
     push_branch,
 )
 from src.strategies.base import (
@@ -30,20 +28,13 @@ def _sanitize_url(url: str) -> str:
 
 
 class MirrorStrategy(SyncStrategy):
-    """Standard mirror sync: bare-clone target, check conflict, push.
-
-    When *force_push* is True the conflict check is skipped. When
-    *delete_remote* is True, any pre-existing target branch other than the
-    one being synced is deleted from the target after the push.
-    """
+    """Standard mirror sync: bare-clone target, check conflict, push."""
 
     def __init__(
         self,
         force_push: bool = False,
-        delete_remote: bool = False,
     ) -> None:
         self.force_push = force_push
-        self.delete_remote = delete_remote
 
     def sync(
         self,
@@ -68,11 +59,6 @@ class MirrorStrategy(SyncStrategy):
             else:
                 target_sha = get_head_sha(target_bare_dir, branch)
 
-            # Capture branches before push (for delete_remote)
-            target_branches_before = (
-                list_remote_branches_url(target_url) if self.delete_remote else []
-            )
-
             # Conflict check (skipped when force_push)
             source_sha = get_head_sha(source_dir, branch)
             ancestor = _merge_base(source_dir, source_sha or branch, target_sha) if target_sha else None
@@ -88,17 +74,6 @@ class MirrorStrategy(SyncStrategy):
             subprocess.run(["git", "remote", "add", "target", target_url], cwd=source_dir, capture_output=True, check=True)
             push_branch(source_dir, "target", branch, force=self.force_push)
             pushed.append(target_url)
-
-            # delete_remote cleanup
-            if self.delete_remote and target_branches_before:
-                for tb in target_branches_before:
-                    if tb == branch:
-                        continue
-                    try:
-                        delete_remote_branch(source_dir, "target", tb)
-                        deleted.append(tb)
-                    except GitError as e:
-                        raise SyncError(f"failed to delete stale branch {tb!r}: {e}") from e
 
             return StrategyResult(
                 success=True,

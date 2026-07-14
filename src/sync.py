@@ -7,12 +7,20 @@ For each topology entry:
 """
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.config import Endpoint, TopologyEntry
-from src.git_helper import GitError, clone_or_fetch, get_head_sha
+from src.git_helper import (
+    GitError,
+    clone_or_fetch,
+    get_head_sha,
+    list_remote_branches_url,
+    delete_remote_branch,
+    resolve_branches,
+)
 from src.platform import build_url
 from src.strategies.base import (
     SyncError,
@@ -41,6 +49,8 @@ class SyncResult:
     restored: list[str] = field(default_factory=list)
     message: str = ""
     release_result: "ReleaseSyncResult | None" = None
+    branches_synced: list[str] = field(default_factory=list)
+    branches_failed: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _resolve_credentials(endpoint: Endpoint, creds: dict[str, "Credential"]) -> str | None:
@@ -56,13 +66,12 @@ def _resolve_credentials(endpoint: Endpoint, creds: dict[str, "Credential"]) -> 
 def _resolve_strategy(
     mode: str,
     force_push: bool = False,
-    delete_remote: bool = False,
     preserve_files: list[str] | None = None,
     work_dir: Path | None = None,
 ) -> SyncStrategy:
     """Create the appropriate SyncStrategy for the given mode."""
     if mode == "mirror":
-        return MirrorStrategy(force_push=force_push, delete_remote=delete_remote)
+        return MirrorStrategy(force_push=force_push)
     elif mode == "rebase":
         return RebaseStrategy(preserve_files=preserve_files, work_dir=work_dir)
     raise SyncError(f"unknown sync mode: {mode}")
@@ -83,6 +92,10 @@ def sync_topology_entry(
 ) -> SyncResult:
     """Execute a single topology entry: fetch source, push to all targets.
 
+    When the source uses ``branches``, every matched branch is synced
+    independently.  Each branch is pushed to every target using
+    ``target.branch`` when set, or the source branch name when not.
+
     Args:
         entry: The TopologyEntry to execute.
         creds: Mapping platform -> Credential.
@@ -90,11 +103,9 @@ def sync_topology_entry(
         force_push: When True, skip the divergence/conflict check and push with
             ``--force``, overwriting any commits the target has that the source
             does not. When False (default), a diverged target aborts the sync.
-        delete_remote: When True, after pushing, delete any branch that already
-            existed on the target (before this sync) but is not the branch being
-            synced. Effectively makes the target a strict mirror of the synced
-            branch. No-ops unless the target already had branches other than the
-            synced one. DANGEROUS: opt in only when you intend to discard stale
+        delete_remote: When True, after pushing all branches, delete any branch
+            that already existed on the target but is NOT in the resolved branch
+            list.  DANGEROUS: opt in only when you intend to discard stale
             target branches.
         mode: Sync strategy mode. "mirror" (default) force-pushes source onto
             target. "rebase" replays source commits on top of target.
@@ -112,7 +123,7 @@ def sync_topology_entry(
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check source credentials.
+    # ---- Check source credentials ----
     src_cred_value = _resolve_credentials(entry.source, creds)
     if not bypass_credentials and (
         entry.source.platform not in creds
@@ -125,7 +136,7 @@ def sync_topology_entry(
             f"missing credentials for source platform {entry.source.platform!r}"
         )
 
-    # Resolve source URL
+    # ---- Resolve source URL ----
     if url_overrides and entry.source.platform in url_overrides:
         source_url = url_overrides[entry.source.platform]
     else:
@@ -137,23 +148,29 @@ def sync_topology_entry(
             token=src_cred_value,
         )
 
+    # ---- Clone source (full or single-branch) ----
     source_clone_dir = work_dir / f"src_{entry.name}"
     try:
-        clone_or_fetch(source_url, source_clone_dir, entry.source.branch)
+        if entry.source.branches:
+            clone_or_fetch(source_url, source_clone_dir, single_branch=False)
+        else:
+            clone_or_fetch(source_url, source_clone_dir, entry.source.branch)
     except GitError as e:
         raise SyncError(f"failed to fetch source: {e}") from e
 
-    source_sha = get_head_sha(source_clone_dir, entry.source.branch)
-    if source_sha is None:
-        raise SyncError(
-            f"source branch {entry.source.branch!r} not found on {entry.source.platform}"
-        )
+    # ---- Resolve branch list ----
+    if entry.source.branches:
+        try:
+            resolved_branches = resolve_branches(entry.source.branches, source_url)
+        except Exception as e:
+            raise SyncError(f"failed to resolve branches: {e}") from e
+    else:
+        resolved_branches = [entry.source.branch]
 
-    # Resolve sync strategy
+    # ---- Resolve strategy (no delete_remote — handled at entry level) ----
     strategy = _resolve_strategy(
         mode,
         force_push=force_push,
-        delete_remote=delete_remote,
         preserve_files=preserve_files,
         work_dir=work_dir,
     )
@@ -162,79 +179,153 @@ def sync_topology_entry(
     deleted: list[str] = []
     skipped: list[str] = []
     restored: list[str] = []
+    branches_synced: list[str] = []
+    branches_failed: list[tuple[str, str]] = []
 
-    for target in entry.targets:
-        # Check target credentials.
-        tgt_cred_value = _resolve_credentials(target, creds)
-        if not bypass_credentials and (
-            target.platform not in creds
-            or not (
-                (target.auth == "pat" and tgt_cred_value)
-                or (target.auth == "ssh" and tgt_cred_value)
-            )
-        ):
-            raise SyncError(
-                f"missing credentials for target platform {target.platform!r}"
-            )
+    # Collect target URLs as we resolve them (needed for delete_remote cleanup)
+    target_urls: dict[str, str] = {}
 
-        # Resolve target URL
-        if url_overrides and target.platform in url_overrides:
-            target_url = url_overrides[target.platform]
-        else:
-            target_url = build_url(
-                target.platform,
-                target.owner,
-                target.repo,
-                target.auth,
-                token=tgt_cred_value,
+    for branch in resolved_branches:
+        # Get source SHA for this branch
+        source_sha = get_head_sha(source_clone_dir, branch)
+        if source_sha is None:
+            branches_failed.append((branch, f"branch {branch!r} not found on source"))
+            continue
+
+        # Ensure the branch exists as a local ref so push can find it.
+        # After a full clone only the default branch has a local tracking
+        # branch; other branches are remote-only (origin/<name>).
+        if entry.source.branches:
+            subprocess.run(
+                ["git", "checkout", branch],
+                cwd=source_clone_dir, capture_output=True,
             )
 
-        # Delegate to strategy
-        try:
-            result = strategy.sync(
-                source_dir=source_clone_dir,
-                target_url=target_url,
-                branch=entry.source.branch,
-            )
-        except SyncError as e:
-            # Auto-create: if the target repo doesn't exist and auto_create
-            # is enabled, create the repo and retry once.
-            if _should_auto_create(target, e, tgt_cred_value, default_auto_create=auto_create):
-                _create_target_repo(target, tgt_cred_value)
+        branch_ok = True
+        for target in entry.targets:
+            # Check target credentials.
+            tgt_cred_value = _resolve_credentials(target, creds)
+            if not bypass_credentials and (
+                target.platform not in creds
+                or not (
+                    (target.auth == "pat" and tgt_cred_value)
+                    or (target.auth == "ssh" and tgt_cred_value)
+                )
+            ):
+                raise SyncError(
+                    f"missing credentials for target platform {target.platform!r}"
+                )
+
+            # Resolve target URL
+            if url_overrides and target.platform in url_overrides:
+                target_url = url_overrides[target.platform]
+            else:
+                target_url = build_url(
+                    target.platform,
+                    target.owner,
+                    target.repo,
+                    target.auth,
+                    token=tgt_cred_value,
+                )
+
+            # Store URL for delete_remote cleanup pass
+            target_urls[target.platform] = target_url
+
+            # Target branch: use target.branch if set, else the source branch name
+            target_branch = target.branch if target.branch else branch
+
+            # Delegate to strategy
+            try:
                 result = strategy.sync(
                     source_dir=source_clone_dir,
                     target_url=target_url,
-                    branch=entry.source.branch,
+                    branch=target_branch,
                 )
-            else:
-                raise
+            except SyncError as e:
+                # Auto-create: if the target repo doesn't exist and auto_create
+                # is enabled, create the repo and retry once.
+                if _should_auto_create(target, e, tgt_cred_value, default_auto_create=auto_create):
+                    _create_target_repo(target, tgt_cred_value)
+                    result = strategy.sync(
+                        source_dir=source_clone_dir,
+                        target_url=target_url,
+                        branch=target_branch,
+                    )
+                elif entry.source.branches:
+                    # Multi-branch mode: record failure and continue with
+                    # remaining branches.
+                    branch_ok = False
+                    branches_failed.append((branch, str(e)))
+                    continue
+                else:
+                    # Single-branch mode: preserve legacy raise behaviour.
+                    raise
 
-        # Format results with full target identifiers for callers.
-        # Strategy returns raw URLs/names; sync_topology_entry adds context.
-        tgt_id = f"{target.platform}:{target.owner}/{target.repo}"
-        if result.success:
-            pushed.append(f"{tgt_id}#{target.branch}")
-        deleted.extend(f"{tgt_id}#{d}" for d in result.deleted)
-        if result.skipped:
-            skipped.append(tgt_id)
-        restored.extend(result.restored)
+            # Format results with full target identifiers for callers.
+            tgt_id = f"{target.platform}:{target.owner}/{target.repo}"
+            if result.success:
+                pushed.append(f"{tgt_id}#{target_branch}")
+            deleted.extend(f"{tgt_id}#{d}" for d in result.deleted)
+            if result.skipped:
+                skipped.append(tgt_id)
+            restored.extend(result.restored)
 
+        if branch_ok:
+            branches_synced.append(branch)
+
+    # ---- delete_remote cleanup (outer loop) ----
+    if delete_remote and target_urls:
+        for target in entry.targets:
+            target_url = target_urls.get(target.platform)
+            if not target_url:
+                continue
+            try:
+                all_target_branches = list_remote_branches_url(target_url)
+            except Exception:
+                continue
+            resolved_set = set(resolved_branches)
+            stale = [b for b in all_target_branches if b not in resolved_set]
+            if stale:
+                subprocess.run(
+                    ["git", "remote", "remove", "del_rm"],
+                    cwd=source_clone_dir, capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "remote", "add", "del_rm", target_url],
+                    cwd=source_clone_dir, capture_output=True, check=True,
+                )
+                for sb in stale:
+                    try:
+                        delete_remote_branch(source_clone_dir, "del_rm", sb)
+                    except GitError:
+                        pass  # best-effort deletion
+
+    # ---- Release sync (unchanged) ----
     release_result = None
     if settings is not None:
         eff_on = entry.sync_releases if entry.sync_releases is not None else settings.sync_releases
         if eff_on:
             release_result = _release_sync.sync_releases(entry, creds, settings)
 
+    # Determine success: at least one branch synced, or source branch list was empty
+    source_label = f"{entry.source.platform}:{entry.source.owner}/{entry.source.repo}"
+    if entry.source.branches:
+        source_label += f"#({','.join(entry.source.branches)})"
+    else:
+        source_label += f"#{entry.source.branch}"
+
     return SyncResult(
-        success=True,
+        success=len(branches_synced) > 0,
         entry_name=entry.name,
-        source=f"{entry.source.platform}:{entry.source.owner}/{entry.source.repo}#{entry.source.branch}",
+        source=source_label,
         targets_pushed=pushed,
         deleted=deleted,
         skipped=skipped,
         restored=restored,
         message="ok",
         release_result=release_result,
+        branches_synced=branches_synced,
+        branches_failed=branches_failed,
     )
 
 
