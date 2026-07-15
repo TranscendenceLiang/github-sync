@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import webui as webui_mod
 from src.webui.main import create_app
 
 
@@ -359,17 +360,19 @@ async def test_index_route_removed(client):
 
 @pytest.mark.asyncio
 async def test_spa_root_served_in_prod(tmp_path, monkeypatch):
-    """Prod mode serves index.html at / when dist exists."""
-    dist = tmp_path / "dist"
-    dist.mkdir()
+    """Prod mode build_prod_app mounts frontend/dist as SPA root and keeps /api/*."""
+    dist = tmp_path / "frontend" / "dist"
+    dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>SPA</body></html>")
-    monkeypatch.setattr("src.webui.main.create_app", lambda **k: create_app(config_path=str(tmp_path / "sync.yaml")))
-    from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
-    app = FastAPI()
-    app.mount("/", StaticFiles(directory=str(dist), html=True), name="spa")
+    # Redirect webui.ROOT so build_prod_app finds our fake dist.
+    monkeypatch.setattr(webui_mod, "ROOT", tmp_path)
+    app = webui_mod.build_prod_app(None)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get("/")
-    assert r.status_code == 200
-    assert "SPA" in r.text
+        assert r.status_code == 200
+        assert "SPA" in r.text
+        # API routes must still be reachable (not swallowed by the mount).
+        r2 = await c.get("/api/health")
+        assert r2.status_code == 200
+        assert r2.json() == {"status": "ok"}
