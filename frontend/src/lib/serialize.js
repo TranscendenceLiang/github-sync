@@ -18,7 +18,12 @@ export function defaultSettings() {
 }
 
 export function parsePreserveFiles(val) {
-  if (!val || !val.trim()) return null;
+  if (val == null) return null;
+  if (Array.isArray(val)) {
+    const cleaned = val.map((s) => String(s).trim()).filter(Boolean);
+    return cleaned.length ? cleaned : null;
+  }
+  if (typeof val !== 'string' || !val.trim()) return null;
   return val.split(',').map((s) => s.trim()).filter(Boolean);
 }
 

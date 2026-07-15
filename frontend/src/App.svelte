@@ -32,6 +32,10 @@
       const data = await getConfig();
       if (!data.settings) data.settings = { ...DEFAULT_SETTINGS };
       if (!data.topology) data.topology = [];
+      if (Array.isArray(data.settings.preserve_files)) data.settings.preserve_files = data.settings.preserve_files.join(', ');
+      (data.topology || []).forEach((e) => {
+        if (Array.isArray(e.preserve_files)) e.preserve_files = e.preserve_files.join(', ');
+      });
       config.set(data);
       selectedIndex.set(data.topology.length > 0 ? 0 : -1);
       dirty.set(false);
@@ -41,6 +45,15 @@
   }
 
   onMount(loadConfig);
+
+  $effect(() => {
+    const d = $dirty;
+    const handler = (e) => {
+      if (d) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  });
 
   function addEntry() {
     const name = window.prompt('输入新条目名称:');

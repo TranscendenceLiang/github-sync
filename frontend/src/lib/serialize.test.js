@@ -23,6 +23,12 @@ describe('parsePreserveFiles', () => {
   it('returns null for null', () => {
     expect(parsePreserveFiles(null)).toBeNull();
   });
+
+  it('parsePreserveFiles accepts array input', () => {
+    expect(parsePreserveFiles(['.cnb.yml', 'Dockerfile'])).toEqual(['.cnb.yml', 'Dockerfile']);
+    expect(parsePreserveFiles([])).toBe(null);
+    expect(parsePreserveFiles(['  a ', '', 'b'])).toEqual(['a', 'b']);
+  });
 });
 
 describe('serializeEndpoint', () => {
