@@ -355,3 +355,21 @@ async def test_index_route_removed(client):
     """GET / no longer serves a template; must 404."""
     r = await client.get("/")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_spa_root_served_in_prod(tmp_path, monkeypatch):
+    """Prod mode serves index.html at / when dist exists."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>SPA</body></html>")
+    monkeypatch.setattr("src.webui.main.create_app", lambda **k: create_app(config_path=str(tmp_path / "sync.yaml")))
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    app = FastAPI()
+    app.mount("/", StaticFiles(directory=str(dist), html=True), name="spa")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/")
+    assert r.status_code == 200
+    assert "SPA" in r.text
