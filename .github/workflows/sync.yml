@@ -10,7 +10,7 @@ on:
 
   # Scheduled runs (default: every 6 hours)
   schedule:
-    - cron: "7 */6 * * *"  # off-the-hour minute to avoid thundering herd
+    - cron: "7 0 * * *"  # daily at 00:07 UTC
 
 jobs:
   sync:

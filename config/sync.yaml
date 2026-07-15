@@ -3,7 +3,7 @@
 sync:
   settings:
     auto_create: true        # 全局启用自动创建，默认 false
-    force_push: true           # Overwrite diverged targets with --force
+    force_push: false          # 检测冲突，不强制覆盖
     delete_remote: true        # Prune stale branches on targets after sync
     mode: mirror               # 全局默认: mirror | rebase
     preserve_files:            # 全局默认保护文件列表（rebase 模式使用）
@@ -23,6 +23,22 @@ sync:
           repo: test
           branch: main
           auth: pat
+
+    - name: "github-video-subtitle-extractor-to-cnb"
+      source:
+        platform: github
+        owner: YaoFANGUK
+        repo: video-subtitle-extractor
+        branch: main
+        auth: pat
+      targets:
+        - platform: cnb
+          owner: TranscendenceLiang
+          repo: video-subtitle-extractor
+          branch: main
+          auth: pat
+          auto_create: true
+          visibility: public
 
     - name: "github-ciphertalk-to-cnb"
       mode: rebase              # 条目级覆盖: 使用 rebase
