@@ -238,3 +238,8 @@ pytest
 
 See `docs/superpowers/specs/2026-06-19-multi-sync-center-design.md` for the
 full design document.
+
+## WebUI
+
+Web 控制台（FastAPI 纯 API + Svelte 5 SPA）的开发、构建、测试与端口说明见
+[docs/webui.md](webui.md)。
