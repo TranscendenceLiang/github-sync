@@ -340,3 +340,18 @@ async def test_full_round_trip(client, tmp_path):
     assert entry["sync_releases"] is True
     assert entry["release_filter"]["mode"] == "pattern"
     assert entry["release_filter"]["pattern"] == "v*"
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint(client):
+    """GET /api/health returns ok status."""
+    r = await client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_index_route_removed(client):
+    """GET / no longer serves a template; must 404."""
+    r = await client.get("/")
+    assert r.status_code == 404

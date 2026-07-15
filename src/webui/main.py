@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from src.config import (
     SyncConfig,
@@ -150,17 +148,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     resolved_path = Path(config_path) if config_path else (Path.cwd() / "config" / "sync.yaml")
 
-    # Mount static files
-    import importlib.resources as res
-    static_dir = res.files("src.webui") / "static"
-    if static_dir.is_dir():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    templates = Jinja2Templates(directory=str(res.files("src.webui") / "templates"))
-
-    @app.get("/")
-    async def index(request: Request):
-        return templates.TemplateResponse("index.html", {"request": request})
+    @app.get("/api/health")
+    async def health():
+        return {"status": "ok"}
 
     @app.get("/api/config")
     async def get_config():
