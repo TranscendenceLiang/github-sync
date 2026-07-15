@@ -269,3 +269,71 @@ def load_config(path: str | Path) -> SyncConfig:
 
     topology = [_parse_entry(t) for t in topo_raw]
     return SyncConfig(settings=settings, topology=topology)
+
+
+def dump_config(cfg: SyncConfig, path: str | Path) -> None:
+    """Serialize a SyncConfig to YAML and write to path with 'sync:' wrapper."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    def _ep(ep: Endpoint) -> dict:
+        d: dict = {
+            "platform": ep.platform,
+            "owner": ep.owner,
+            "repo": ep.repo,
+        }
+        if ep.branch is not None:
+            d["branch"] = ep.branch
+        if ep.branches is not None:
+            d["branches"] = ep.branches
+        d["auth"] = ep.auth
+        if ep.auto_create:
+            d["auto_create"] = True
+        d["visibility"] = ep.visibility
+        return d
+
+    def _rf(rf: ReleaseFilter) -> dict:
+        d: dict = {"mode": rf.mode}
+        if rf.mode == "latest":
+            d["latest_count"] = rf.latest_count
+        if rf.mode == "pattern" and rf.pattern is not None:
+            d["pattern"] = rf.pattern
+        if rf.mode == "tags" and rf.tags is not None:
+            d["tags"] = rf.tags
+        if rf.include_drafts:
+            d["include_drafts"] = True
+        return d
+
+    def _entry(te: TopologyEntry) -> dict:
+        d: dict = {"name": te.name, "source": _ep(te.source)}
+        d["targets"] = [_ep(t) for t in te.targets]
+        if te.mode is not None:
+            d["mode"] = te.mode
+        if te.preserve_files is not None:
+            d["preserve_files"] = te.preserve_files
+        if te.sync_releases is not None:
+            d["sync_releases"] = te.sync_releases
+        if te.release_filter is not None:
+            d["release_filter"] = _rf(te.release_filter)
+        return d
+
+    data = {
+        "sync": {
+            "settings": {
+                "auto_create": cfg.settings.auto_create,
+                "force_push": cfg.settings.force_push,
+                "delete_remote": cfg.settings.delete_remote,
+                "mode": cfg.settings.mode,
+            }
+        }
+    }
+    if cfg.settings.preserve_files is not None:
+        data["sync"]["settings"]["preserve_files"] = cfg.settings.preserve_files
+    if cfg.settings.sync_releases:
+        data["sync"]["settings"]["sync_releases"] = True
+    if cfg.settings.release_asset_max_size_mb != 50:
+        data["sync"]["settings"]["release_asset_max_size_mb"] = cfg.settings.release_asset_max_size_mb
+    if cfg.settings.release_filter != ReleaseFilter():
+        data["sync"]["settings"]["release_filter"] = _rf(cfg.settings.release_filter)
+    data["sync"]["topology"] = [_entry(t) for t in cfg.topology]
+    p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False), encoding="utf-8")
