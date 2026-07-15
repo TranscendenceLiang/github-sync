@@ -5,6 +5,7 @@ let config = null;          // full config object from API
 let selectedIndex = -1;      // index into config.topology
 let dirty = false;           // unsaved changes tracker
 let currentEntryId = null;   // for tracking which entry is being edited
+let targetBranchCounter = 0; // counter for unique target branch radio names
 
 // ── DOM refs ───────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -172,8 +173,8 @@ function renderTargets(targets) {
         <label>仓库: <input type="text" class="ep-repo" value="${t.repo || ''}"></label>
         <div class="branch-mode">
           <label>分支模式:
-            <label><input type="radio" name="target-branch-${Date.now()}" value="single" ${t.branches ? '' : 'checked'}> 单分支</label>
-            <label><input type="radio" name="target-branch-${Date.now()}" value="multi" ${t.branches ? 'checked' : ''}> 多分支</label>
+            <label><input type="radio" name="target-branch-${targetBranchCounter++}" value="single" ${t.branches ? '' : 'checked'}> 单分支</label>
+            <label><input type="radio" name="target-branch-${targetBranchCounter}" value="multi" ${t.branches ? 'checked' : ''}> 多分支</label>
           </label>
         </div>
         <div class="branch-single ${t.branches ? 'hidden' : ''}">
@@ -201,6 +202,12 @@ function renderTargets(targets) {
       const tagList = card.querySelector('.ep-branches');
       const val = prompt('输入分支名:');
       if (val && val.trim()) addTag(tagList, val.trim());
+    });
+    card.querySelector('.btn-remove-target')?.addEventListener('click', () => {
+      const idx = parseInt(card.querySelector('.btn-remove-target').dataset.index);
+      config.topology[selectedIndex].targets.splice(idx, 1);
+      renderTargets(config.topology[selectedIndex].targets);
+      dirty = true;
     });
   });
 }
@@ -460,6 +467,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   editorForm.addEventListener('change', () => { dirty = true; });
   editorForm.addEventListener('input', () => { dirty = true; });
+
+  settingsPanel.addEventListener('change', () => { dirty = true; });
+  settingsPanel.addEventListener('input', () => { dirty = true; });
 
   window.addEventListener('beforeunload', (e) => {
     if (dirty) { e.preventDefault(); e.returnValue = ''; }
