@@ -259,3 +259,84 @@ async def test_get_config_when_file_missing(tmp_path):
     data = r.json()
     assert "settings" in data
     assert "topology" in data
+
+
+@pytest.mark.asyncio
+async def test_full_round_trip(client, tmp_path):
+    """End-to-end: create entry with branches + release_filter, save, reload, verify."""
+    payload = {
+        "settings": {
+            "auto_create": True,
+            "force_push": False,
+            "delete_remote": True,
+            "mode": "mirror",
+            "preserve_files": [".cnb.yml"],
+            "sync_releases": True,
+            "release_asset_max_size_mb": 50,
+            "release_filter": {
+                "mode": "all",
+                "latest_count": 1,
+                "pattern": None,
+                "tags": None,
+                "include_drafts": False,
+            },
+        },
+        "topology": [
+            {
+                "name": "full-test",
+                "source": {
+                    "platform": "github", "owner": "a", "repo": "b",
+                    "branch": None, "branches": ["main", "dev"],
+                    "auth": "ssh", "auto_create": False, "visibility": "private",
+                },
+                "targets": [
+                    {
+                        "platform": "cnb", "owner": "a", "repo": "b",
+                        "branch": "main", "branches": None,
+                        "auth": "pat", "auto_create": True, "visibility": "private",
+                    },
+                    {
+                        "platform": "gitee", "owner": "a", "repo": "b",
+                        "branch": "mirror", "branches": None,
+                        "auth": "ssh", "auto_create": False, "visibility": "public",
+                    },
+                ],
+                "mode": "rebase",
+                "preserve_files": [".cnb.yml", "Dockerfile"],
+                "sync_releases": True,
+                "release_filter": {
+                    "mode": "pattern",
+                    "latest_count": 1,
+                    "pattern": "v*",
+                    "tags": None,
+                    "include_drafts": False,
+                },
+            }
+        ],
+    }
+
+    # Save
+    r = await client.post("/api/config", json=payload)
+    assert r.status_code == 200, r.text
+
+    # Reload
+    r2 = await client.get("/api/config")
+    assert r2.status_code == 200
+    data = r2.json()
+
+    # Verify settings
+    assert data["settings"]["auto_create"] is True
+    assert data["settings"]["preserve_files"] == [".cnb.yml"]
+
+    # Verify topology
+    entry = data["topology"][0]
+    assert entry["name"] == "full-test"
+    assert entry["source"]["branches"] == ["main", "dev"]
+    assert entry["source"]["branch"] is None
+    assert len(entry["targets"]) == 2
+    assert entry["targets"][0]["platform"] == "cnb"
+    assert entry["targets"][1]["platform"] == "gitee"
+    assert entry["mode"] == "rebase"
+    assert entry["sync_releases"] is True
+    assert entry["release_filter"]["mode"] == "pattern"
+    assert entry["release_filter"]["pattern"] == "v*"
