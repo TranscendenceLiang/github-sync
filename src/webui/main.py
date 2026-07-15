@@ -52,6 +52,11 @@ def _dataclass_to_dict(obj) -> dict:
             val = getattr(obj, field_name)
             if val is not None:
                 result[field_name] = _dataclass_to_dict(val)
+            elif isinstance(obj, Endpoint):
+                # Endpoint.branch / Endpoint.branches may be None but must still
+                # appear in the JSON so the frontend can distinguish "not set"
+                # from "not applicable".
+                result[field_name] = None
         return result
     if isinstance(obj, list):
         return [_dataclass_to_dict(item) for item in obj]
@@ -92,7 +97,6 @@ def _rebuild_config(data: dict) -> SyncConfig:
     topology = []
     for item in topology_data:
         source_data = item.get("source", {})
-        targets_data = item.get("targets", [])
         source = Endpoint(
             platform=source_data.get("platform", ""),
             owner=source_data.get("owner", ""),
@@ -165,6 +169,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             return _strip_sync_wrapper(cfg)
         except FileNotFoundError:
             return _default_config()
+        except ConfigError as e:
+            # "config file not found" is treated as "use defaults"; other errors propagate.
+            if "config file not found" in str(e):
+                return _default_config()
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 

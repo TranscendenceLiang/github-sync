@@ -4,7 +4,6 @@
 let config = null;          // full config object from API
 let selectedIndex = -1;      // index into config.topology
 let dirty = false;           // unsaved changes tracker
-let currentEntryId = null;   // for tracking which entry is being edited
 let targetBranchCounter = 0; // counter for unique target branch radio names
 
 // ── DOM refs ───────────────────────────────────────
@@ -337,6 +336,34 @@ function fillReleaseFilter(prefix, rf) {
 }
 
 // ── Save ────────────────────────────────────────────
+async function showYamlPreview(payload) {
+  const dialog = $('#yaml-preview-dialog');
+  const content = $('#yaml-preview-content');
+  content.textContent = JSON.stringify(payload, null, 2);
+  dialog.showModal();
+
+  $('#yaml-confirm').onclick = async () => {
+    dialog.close();
+    try {
+      await apiPost('/api/config', payload);
+      setStatus('配置已保存', 'success');
+      dirty = false;
+    } catch (e) {
+      setStatus('保存失败: ' + e.message, 'error');
+    }
+  };
+
+  $('#yaml-cancel').onclick = () => dialog.close();
+}
+
+function showConfirm(msg, onConfirm) {
+  const dialog = $('#confirm-dialog');
+  $('#confirm-msg').textContent = msg;
+  dialog.showModal();
+  $('#confirm-yes').onclick = () => { dialog.close(); onConfirm(); };
+  $('#confirm-no').onclick = () => dialog.close();
+}
+
 async function saveConfig() {
   if (selectedIndex >= 0) {
     config.topology[selectedIndex] = collectFormEntry();
@@ -354,13 +381,7 @@ async function saveConfig() {
     },
     topology: config.topology,
   };
-  try {
-    await apiPost('/api/config', payload);
-    setStatus('配置已保存', 'success');
-    dirty = false;
-  } catch (e) {
-    setStatus('保存失败: ' + e.message, 'error');
-  }
+  showYamlPreview(payload);
 }
 
 // ── Validate ────────────────────────────────────────
@@ -411,13 +432,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#btn-delete-entry').addEventListener('click', () => {
     if (selectedIndex < 0) return;
-    if (!confirm(`确定删除条目「${config.topology[selectedIndex].name}」？`)) return;
-    config.topology.splice(selectedIndex, 1);
-    selectedIndex = -1;
-    renderEntryList();
-    showPlaceholder();
-    dirty = true;
-    setStatus('条目已删除（未保存）', '');
+    showConfirm(`确定删除条目「${config.topology[selectedIndex].name}」？`, () => {
+      config.topology.splice(selectedIndex, 1);
+      selectedIndex = -1;
+      renderEntryList();
+      showPlaceholder();
+      dirty = true;
+      setStatus('条目已删除（未保存）', '');
+    });
   });
 
   $('#btn-add-target').addEventListener('click', () => {
@@ -431,8 +453,11 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#btn-save').addEventListener('click', saveConfig);
   $('#btn-validate').addEventListener('click', validateConfig);
   $('#btn-refresh').addEventListener('click', () => {
-    if (dirty && !confirm('有未保存的修改，确定刷新？')) return;
-    loadConfig();
+    if (dirty) {
+      showConfirm('有未保存的修改，确定刷新？', () => loadConfig());
+    } else {
+      loadConfig();
+    }
   });
 
   document.addEventListener('change', (e) => {
