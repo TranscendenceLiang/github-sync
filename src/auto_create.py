@@ -78,13 +78,14 @@ def create_repo(request: CreateRepoRequest) -> None:
             "private": request.visibility == "private",
         })
     elif request.platform == "cnb":
-        url = "https://api.cnb.cool/repos"
+        # CNB OpenAPI: POST /{slug}/-/repos  (slug is the org/user path, NOT a body field)
+        url = f"https://api.cnb.cool/{request.owner}/-/repos"
         headers = [
             "-H", f"Authorization: Bearer {request.token}",
+            "-H", "Accept: application/vnd.cnb.api+json",
             "-H", "Content-Type: application/json",
         ]
         body = json.dumps({
-            "slug": request.owner,
             "name": request.repo,
             "visibility": request.visibility,
         })

@@ -43,7 +43,7 @@ def test_create_repo_github(tmp_path):
 
 
 def test_create_repo_cnb(tmp_path):
-    """CNB: POST /repos with slug + name + visibility."""
+    """CNB: POST /{owner}/-/repos with name + visibility (slug goes in path)."""
     call_log = []
     original_run = subprocess.run
 
@@ -68,8 +68,8 @@ def test_create_repo_cnb(tmp_path):
         subprocess.run = original_run
 
     cmd = " ".join(call_log[0])
-    assert "api.cnb.cool/repos" in cmd
-    assert "myorg" in cmd  # slug
+    assert "api.cnb.cool/myorg/-/repos" in cmd
+    assert "myorg" in cmd  # slug in path
     assert "test-repo" in cmd
 
 
