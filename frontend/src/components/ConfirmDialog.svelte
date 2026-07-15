@@ -1,7 +1,11 @@
 <script>
+  import { onMount } from 'svelte';
   let { message, onConfirm, onCancel } = $props();
+  let dlg;
+  onMount(() => { if (dlg) dlg.showModal(); });
 </script>
-<dialog open>
+
+<dialog bind:this={dlg}>
   <p>{message}</p>
   <div class="dialog-actions">
     <button class="btn-danger" onclick={onConfirm}>确认</button>
