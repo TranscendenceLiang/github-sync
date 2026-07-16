@@ -10,19 +10,28 @@ sync:
       - .cnb.yml
 
   topology:
-    - name: "github-qwenpaw-to-cnb"
+    - name: "github-happy-next-to-github-and-cnb"
       source:
         platform: github
         owner: TranscendenceLiang
-        repo: QwenPaw
+        repo: happy-next
         branch: main
         auth: pat
       targets:
-        - platform: cnb
+        - platform: github
           owner: TranscendenceLiang
-          repo: test
+          repo: happy-next
           branch: main
           auth: pat
+          auto_create: true
+          visibility: public
+        - platform: cnb
+          owner: TranscendenceLiang
+          repo: happy-next
+          branch: main
+          auth: pat
+          auto_create: true
+          visibility: public
 
     - name: "github-video-subtitle-extractor-to-cnb"
       source:
