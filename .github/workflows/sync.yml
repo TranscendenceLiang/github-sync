@@ -15,11 +15,23 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Large repos (~1GB) push ~1GB over HTTPS cross-region to CNB; 30 min was
+    # not enough and the job was killed mid-push. Give slow-but-progressing
+    # transfers room to finish.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Tune git for large cross-region transfers
+        # Belt-and-suspenders: the sync engine already injects these per-command,
+        # but set them globally so any git invocation on the runner benefits.
+        run: |
+          git config --global http.postBuffer 524288000
+          git config --global http.version HTTP/1.1
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 120
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -21,6 +21,33 @@ class GitError(Exception):
     """Raised for any git operation failure."""
 
 
+# HTTP transport tuning for large repositories.
+#
+# Injected (via ``git -c``) into every network-facing git command
+# (clone / fetch / push / ls-remote). Motivation: syncing a large repo
+# (~1GB) from GitHub to CNB pushes ~1GB over HTTPS across regions, which
+# stalls or fails with git's defaults:
+#   - http.postBuffer: default is 1MB. A large single POST push gets split
+#     and some servers stall/reject it. Bump to 512MB so the whole pack
+#     goes in one buffered POST.
+#   - http.version=HTTP/1.1: HTTP/2 uploads of large packs are known to
+#     stall with certain proxies/servers; force 1.1 for reliability.
+#   - http.lowSpeedLimit/lowSpeedTime: abort a dead connection (<1KB/s for
+#     120s) instead of hanging until the CI job's hard timeout, so a clear
+#     error surfaces fast.
+_HTTP_OPTS: list[str] = [
+    "-c", "http.postBuffer=524288000",
+    "-c", "http.version=HTTP/1.1",
+    "-c", "http.lowSpeedLimit=1000",
+    "-c", "http.lowSpeedTime=120",
+]
+
+
+def _git_net(*args: str) -> list[str]:
+    """Build a git command for network operations with large-repo HTTP tuning."""
+    return ["git", *_HTTP_OPTS, *args]
+
+
 def _run(args: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     """Run a git command. Raise GitError on non-zero return."""
     proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
@@ -65,14 +92,14 @@ def clone_or_fetch(
     dest = Path(dest)
     if (dest / ".git").is_dir():
         if branch:
-            _run(["git", "fetch", "origin", branch], cwd=dest)
+            _run(_git_net("fetch", "origin", branch), cwd=dest)
             _run(["git", "checkout", branch], cwd=dest)
             _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=dest)
         else:
-            _run(["git", "fetch", "--all"], cwd=dest)
+            _run(_git_net("fetch", "--all"), cwd=dest)
     else:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        args = ["git", "clone"]
+        args = _git_net("clone")
         if single_branch and branch:
             args += ["--branch", branch, "--single-branch"]
         args += [url, str(dest)]
@@ -99,7 +126,7 @@ def get_head_sha(repo: Path, branch: str) -> str | None:
 
 def push_branch(repo: Path, remote: str, branch: str, force: bool = False) -> None:
     """Push a local branch to the given remote."""
-    args = ["git", "push"]
+    args = _git_net("push")
     if force:
         args.append("--force")
     args += [remote, branch]
@@ -138,7 +165,7 @@ def list_remote_branches_url(url: str) -> list[str]:
     the rest). Returns an empty list on failure.
     """
     proc = subprocess.run(
-        ["git", "ls-remote", "--heads", url],
+        _git_net("ls-remote", "--heads", url),
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
@@ -176,4 +203,4 @@ def resolve_branches(patterns: list[str], url: str) -> list[str]:
 
 def delete_remote_branch(repo: Path, remote: str, branch: str) -> None:
     """Delete a branch on the given remote."""
-    _run(["git", "push", "--delete", remote, branch], cwd=Path(repo))
+    _run(_git_net("push", "--delete", remote, branch), cwd=Path(repo))
